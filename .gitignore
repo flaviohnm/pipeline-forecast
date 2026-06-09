@@ -1,9 +1,12 @@
 # Ignora dados e resultados pesados
 data/
 results/
+lightning_logs/
 
 # Ignora ambientes virtuais e cache do Python
 .venv/
 __pycache__/
 *.pyc
 .env
+
+poetry.lock
