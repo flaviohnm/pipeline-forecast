@@ -1,0 +1,93 @@
+# config/main_config.yaml
+project_name: "Time Series Forecasting Pipeline"
+
+# Mapeamento de Pastas (Rastreabilidade MLOps)
+results_paths:
+  forecasts: "results/forecasts/"
+  metrics: "results/metrics/"
+  plots: "results/plots/"
+  reports: "results/reports/"
+  residuals: "results/residuals/"
+  deep_learning: "results/forecasts/deep/"
+  hybrid: "results/forecasts/hybrid/"
+  arima: "results/forecasts/arima/"
+  ets: "results/forecasts/ets/"
+  statistical: "results/statistical/"
+
+# Configurações Globais
+random_seed: 42
+
+# Definição dos Datasets (Com links para download automático)
+datasets:
+  # =========================================================
+  # SANITY CHECK: AirPassengers (Sazonalidade e Tendência claras)
+  # =========================================================
+  AirPassengers:
+    path: "data/AirPassengers.csv"
+    download_url: "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv"
+    target_column: "Passengers"
+    date_column: "Month"
+    freq: "MS" # Month Start (Frequência Mensal)
+    forecast_horizon: [ 12, 24 ]
+    max_horizon: 24
+    test_size: 24
+    val_size: 12
+    seasonal_period: 12 # Sazonalidade anual (12 meses)
+
+  # =========================================================
+  # DATASETS PRINCIPAIS (Sensores IoT)
+  # =========================================================
+  ETTh1:
+    path: "data/ETTh1.csv"
+    download_url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv"
+    target_column: "OT"
+    date_column: "date"
+    freq: "h"
+    forecast_horizon: [ 24, 48, 168, 336, 720 ]
+    test_size: 2880
+    val_size: 720
+    seasonal_period: 24
+
+  ETTh2:
+    path: "data/ETTh2.csv"
+    download_url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh2.csv"
+    target_column: "OT"
+    date_column: "date"
+    freq: "h"
+    forecast_horizon: [ 24, 48, 168, 336, 720 ]
+    test_size: 2880
+    val_size: 720
+    seasonal_period: 24
+
+  ETTm1:
+    path: "data/ETTm1.csv"
+    download_url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTm1.csv"
+    target_column: "OT"
+    date_column: "date"
+    freq: "t"
+    forecast_horizon: [ 24, 48, 96, 288, 672 ]
+    test_size: 2880
+    val_size: 720
+    seasonal_period: 96 # (24 * 4)
+
+  ECL:
+    path: "data/ECL.csv"
+    download_url: "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/electricity.csv"
+    target_column: "OT"
+    date_column: "date"
+    freq: "h"
+    forecast_horizon: [ 24, 48, 168, 336, 720, 960 ]
+    test_size: 2880
+    val_size: 2160
+    seasonal_period: 24
+
+  Weather:
+    path: "data/Weather.csv"
+    download_url: "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/weather.csv"
+    target_column: "OT"
+    date_column: "date"
+    freq: "10t"
+    forecast_horizon: [ 24, 48, 168, 336, 720 ]
+    test_size: 10539
+    val_size: 5269
+    seasonal_period: 144
