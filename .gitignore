@@ -1,12 +1,33 @@
-# Ignora dados e resultados pesados
+# --- 1. DADOS E RESULTADOS (Deep Learning / TSF) ---
 data/
 results/
 lightning_logs/
+# Ignora possíveis notebooks de rascunho que você não quer versionar
+*draft*.ipynb
+*teste*.ipynb
 
-# Ignora ambientes virtuais e cache do Python
+# --- 2. AMBIENTES VIRTUAIS E SEGURANÇA ---
 .venv/
-__pycache__/
-*.pyc
 .env
+# Nunca ignore o poetry.lock em projetos de aplicação/pipeline!
 
-poetry.lock
+# --- 3. CACHE E COMPILADOS DO PYTHON ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- 4. FERRAMENTAS DE DATA SCIENCE (Jupyter/IPython) ---
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# --- 5. TESTES E COBERTURA (Opcional, mas recomendado) ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- 6. IDEs E SISTEMA OPERACIONAL ---
+.vscode/
+.idea/
+.DS_Store
