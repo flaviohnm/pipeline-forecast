@@ -14,18 +14,15 @@ lightning_logs/
 # --- 3. CACHE E COMPILADOS DO PYTHON ---
 __pycache__/
 *.py[cod]
-*$py.class
+*$py.classs
 *.so
+__init__.py
 
 # --- 4. FERRAMENTAS DE DATA SCIENCE (Jupyter/IPython) ---
 .ipynb_checkpoints/
 profile_default/
 ipython_config.py
 
-# --- 5. TESTES E COBERTURA (Opcional, mas recomendado) ---
-.pytest_cache/
-.coverage
-htmlcov/
 
 # --- 6. IDEs E SISTEMA OPERACIONAL ---
 .vscode/
