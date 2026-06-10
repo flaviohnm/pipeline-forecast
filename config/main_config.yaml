@@ -10,6 +10,8 @@ results_paths:
   residuals: "results/residuals/"
   deep_learning: "results/forecasts/deep/"
   hybrid: "results/forecasts/hybrid/"
+  hybrid_prophet: "results/forecasts/hybrid_prophet/"
+  prophet: "results/forecasts/prophet/"
   arima: "results/forecasts/arima/"
   ets: "results/forecasts/ets/"
   statistical: "results/statistical/"

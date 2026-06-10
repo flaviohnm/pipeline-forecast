@@ -61,6 +61,21 @@ class MetricsMultiHorizon:
             df_ets["ds"] = pd.to_datetime(df_ets["ds"])
             df_preds = pd.merge(df_preds, df_ets.drop(columns=["unique_id"], errors="ignore"), on="ds", how="inner")
 
+        # 3.5 Carrega Prophet e Híbrido Prophet
+        prophet_dir = BASE_DIR / self.config["results_paths"]["prophet"]
+        prophet_file = prophet_dir / f"{current_dataset}_prophet_predictions.csv"
+        if prophet_file.exists():
+            df_prophet = pd.read_csv(prophet_file)
+            df_prophet["ds"] = pd.to_datetime(df_prophet["ds"])
+            df_preds = pd.merge(df_preds, df_prophet.drop(columns=["unique_id"], errors="ignore"), on="ds", how="inner")
+
+        hybrid_prophet_dir = BASE_DIR / self.config["results_paths"]["hybrid_prophet"]
+        hybrid_prophet_file = hybrid_prophet_dir / f"{current_dataset}_hybrid_prophet_predictions.csv"
+        if hybrid_prophet_file.exists():
+            df_hp = pd.read_csv(hybrid_prophet_file)
+            df_hp["ds"] = pd.to_datetime(df_hp["ds"])
+            df_preds = pd.merge(df_preds, df_hp.drop(columns=["unique_id"], errors="ignore"), on="ds", how="inner")
+
         # 4. Carrega os Dados Reais (O Gabarito)
         df_raw = pd.read_csv(BASE_DIR / info["path"])
         df_raw = df_raw[[info["date_column"], info["target_column"]]].copy()
@@ -79,11 +94,13 @@ class MetricsMultiHorizon:
         model_columns = {
             "ARIMA": "ARIMA",
             "ETS": "ETS",
+            "Prophet": "Prophet",
             "MLP": "MLP",
             "LSTM": "LSTM",
-            "N-HiTS (Puro)": "NHITS_Standalone",
+            "N-HiTS": "NHITS_Standalone",
             "Informer": "Informer_Standalone",
-            "Híbrido (Proposto)": "Hybrid_ARIMA_NHITS",
+            "Híbrido (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS",
+            "Híbrido (Prophet + N-HiTS)": "Hybrid_Prophet_NHITS",
         }
 
         for h in horizons:

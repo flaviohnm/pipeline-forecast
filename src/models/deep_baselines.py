@@ -59,7 +59,7 @@ class DLBaselinesTrainer:
             "MLP": MLP(
                 h=horizon,
                 input_size=input_size,
-                max_steps=500,
+                max_steps=300,
                 batch_size=8,
                 scaler_type="standard",
                 accelerator="cpu",
@@ -70,7 +70,7 @@ class DLBaselinesTrainer:
             "LSTM": LSTM(
                 h=horizon,
                 input_size=input_size,
-                max_steps=500,
+                max_steps=300,
                 batch_size=1,
                 encoder_hidden_size=64,
                 scaler_type="standard",
@@ -94,7 +94,7 @@ class DLBaselinesTrainer:
                 h=horizon,
                 input_size=horizon,
                 max_steps=300,
-                batch_size=1,
+                batch_size=2,
                 scaler_type="standard",
                 accelerator="cpu",
                 random_seed=self.config["random_seed"],

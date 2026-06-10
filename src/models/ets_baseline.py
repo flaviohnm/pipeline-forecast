@@ -18,7 +18,6 @@ class ETSBaselineTrainer:
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-        # Modificado conforme sua decisão de padronização
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["ets"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
@@ -30,7 +29,7 @@ class ETSBaselineTrainer:
         return df_n
 
     def run(self):
-        print("\n📈 Iniciando Treinamento: Baseline Estatística (AutoETS)")
+        print(f"\n📈 Iniciando Treinamento: Baseline Estatística (AutoETS) - {dataset_name}")
 
         info = self.config["datasets"][dataset_name]
 
@@ -41,21 +40,23 @@ class ETSBaselineTrainer:
         horizon = max(info["forecast_horizon"])  # 720
         train_df = df.iloc[:-horizon]
 
-        season_length = 24
+        # CORREÇÃO 2: Puxa a sazonalidade dinamicamente do YAML (Respeita 24, 96, 144...)
+        season_length = info.get("seasonal_period", 24)
 
-        # Mantendo o modelo 'AAA' (Holt-Winters Aditivo) para evitar linhas retas
-        models = [AutoETS(season_length=season_length, model="AAA")]
+        # CORREÇÃO 1: Usa 'ZZA' (Erro Auto, Tendência Auto, Sazonalidade Aditiva)
+        # Isso impede que a tendência exploda infinitamente no horizonte de 720 passos
+        models = [AutoETS(season_length=season_length, model="ZZA")]
 
         sf = StatsForecast(df=train_df, models=models, freq=info["freq"], n_jobs=-1)
 
-        print("\n🚀 Calculando o modelo ETS (Holt-Winters)...")
+        print(f"\n🚀 Calculando AutoETS (Sazonalidade: {season_length})...")
         forecasts = sf.forecast(h=horizon)
 
         forecasts = forecasts.reset_index().rename(columns={"AutoETS": "ETS"})
 
         out_file = self.forecast_dir / f"{dataset_name}_ets_predictions.csv"
         forecasts.to_csv(out_file, index=False)
-        print(f"✅ Previsão ETS salva em: {self.forecast_dir.parent.name}/{self.forecast_dir.name}/{out_file.name}\n")
+        print(f"✅ Previsão ETS salva em: {self.forecast_dir.name}/{out_file.name}\n")
 
 
 if __name__ == "__main__":
