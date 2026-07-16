@@ -59,14 +59,14 @@ while true; do
         0) poetry run python src/data/download_dataset.py ;;
         1)
             echo "🚀 Iniciando Execução Completa para $DATASET..."
-            systemd-inhibit poetry run python src/data/download_dataset.py
+            systemd-inhibit poetry run python src/ingestion/download_dataset.py
             systemd-inhibit poetry run python src/models/ets_baseline.py
             systemd-inhibit poetry run python src/models/prophet_baseline.py
             systemd-inhibit poetry run python src/models/arima_baseline.py
             systemd-inhibit poetry run python src/models/nhits_residual.py
             systemd-inhibit poetry run python src/models/hybrid_combiner.py
             systemd-inhibit poetry run python src/models/hybrid_prophet_nhits.py
-            #systemd-inhibit poetry run python src/models/deep_baselines.py
+            systemd-inhibit poetry run python src/models/deep_baselines.py
             systemd-inhibit poetry run python src/metrics/evaluate_metrics.py
             systemd-inhibit poetry run python src/visualization/plot_results.py
             echo ""

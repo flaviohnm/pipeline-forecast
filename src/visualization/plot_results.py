@@ -1,3 +1,4 @@
+import os
 import warnings
 from pathlib import Path
 
@@ -28,11 +29,11 @@ class ResultsPlotter:
 
     def plot_mse_benchmark(self, dataset_name):
         """Gera um gráfico de barras comparando o MSE por horizonte"""
-        print(f"📊 Gerando gráfico de barras de Benchmarking para {dataset_name}...")
+        print(f"   📊 Gerando gráfico de barras de Benchmarking para {dataset_name}...")
 
         metrics_file = self.metrics_dir / f"{dataset_name}_evaluation_complete.csv"
         if not metrics_file.exists():
-            print(f"⚠️ Arquivo de métricas não encontrado: {metrics_file}")
+            print(f"   ⚠️ Arquivo de métricas não encontrado: {metrics_file}")
             return
 
         df = pd.read_csv(metrics_file)
@@ -49,18 +50,18 @@ class ResultsPlotter:
         out_path = self.plots_dir / f"{dataset_name}_mse_benchmark.png"
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
         plt.close()
-        print(f"✅ Gráfico de barras salvo em: {out_path}")
+        print(f"   ✅ Gráfico de barras salvo em: {out_path.name}")
 
     def plot_time_series_forecast(self, dataset_name):
         """Gera um gráfico de linhas mostrando a previsão final vs dados reais"""
-        print(f"📈 Gerando gráfico de linhas da previsão para {dataset_name}...")
+        print(f"   📈 Gerando gráfico de linhas da previsão para {dataset_name}...")
 
         preds_file = self.forecast_hybrid / f"{dataset_name}_hybrid_predictions.csv"
         info = self.config["datasets"][dataset_name]
         raw_file = BASE_DIR / info["path"]
 
         if not preds_file.exists() or not raw_file.exists():
-            print("⚠️ Arquivos de previsão ou dados reais não encontrados.")
+            print("   ⚠️ Arquivos de previsão ou dados reais não encontrados.")
             return
 
         # Carrega dados reais e previsões do Híbrido e ARIMA
@@ -111,13 +112,42 @@ class ResultsPlotter:
         out_path = self.plots_dir / f"{dataset_name}_forecast_lines.png"
         plt.savefig(out_path, dpi=300)
         plt.close()
-        print(f"✅ Gráfico de linhas salvo em: {out_path}")
+        print(f"   ✅ Gráfico de linhas salvo em: {out_path.name}")
 
     def run(self):
         print("\n🎨 [PASSO 5] Gerando Visualizações para o Artigo Científico")
-        dataset_name = "ETTh1"
-        self.plot_mse_benchmark(dataset_name)
-        self.plot_time_series_forecast(dataset_name)
+        
+        # Puxa a variável de ambiente (ou ETTh1 por padrão se estiver vazio)
+        target_dataset = os.getenv("DATASET", "ETTh1").strip()
+
+        if target_dataset.upper() == "ALL":
+            print("🚀 Modo BATCH detectado: Filtrando datasets com dados PRONTOS para plotagem...")
+            datasets_to_run = []
+            
+            # Só adiciona na fila se os arquivos já existirem nas pastas
+            for ds in self.config["datasets"].keys():
+                metrics_ok = (self.metrics_dir / f"{ds}_evaluation_complete.csv").exists()
+                hybrid_ok = (self.forecast_hybrid / f"{ds}_hybrid_predictions.csv").exists()
+                
+                if metrics_ok and hybrid_ok:
+                    datasets_to_run.append(ds)
+            
+            if not datasets_to_run:
+                print("   ⚠️ Nenhum dataset possui arquivos de métricas e previsões gerados ainda.")
+                return
+            else:
+                print(f"   ✅ Datasets validados e prontos: {', '.join(datasets_to_run)}")
+        else:
+            datasets_to_run = [target_dataset]
+
+        for ds_name in datasets_to_run:
+            print(f"\n🖼️  Processando imagens para: {ds_name}")
+            try:
+                self.plot_mse_benchmark(ds_name)
+                self.plot_time_series_forecast(ds_name)
+            except Exception as e:
+                print(f"   ❌ Erro ao gerar gráficos para {ds_name}: {e}")
+                
         print("-" * 60 + "\n")
 
 
