@@ -4,13 +4,13 @@ Este repositório contém o código-fonte e o pipeline MLOps desenvolvido para a
 
 O projeto automatiza todo o ciclo de vida do experimento, desde a ingestão de dados de benchmarks renomados (ETT, Weather, ECL e AirPassengers), passando pelo treinamento dos modelos, extração de resíduos, inferência e avaliação multi-horizonte.
 
-O objetivo da pesquisa é comparar o desempenho dos modelos híbridos desenvolvidos com os melhores modelos individuais em cada conjunto de dados.
+O objetivo da pesquisa é comparar o desempenho dos modelos híbridos desenvolvidos contra o melhor modelo individual de cada conjunto de dados.
 
 ---
 
 # 🎯 Arquitetura e Modelos
 
-A proposta metodológica utiliza modelos estatísticos para capturar os componentes lineares da série temporal e redes neurais profundas para modelar os resíduos não lineares.
+A proposta metodológica utiliza modelagem estatística para capturar os componentes lineares da série temporal e redes neurais profundas para modelar os resíduos não lineares.
 
 ## Modelos Estatísticos
 
@@ -204,7 +204,7 @@ Datasets
 Ingestão
      │
      ▼
-Modelos Estatísticos
+Modelagem Estatística
      │
      ├── AutoARIMA
      ├── AutoETS
@@ -237,4 +237,9 @@ Métricas + Gráficos
 
 Este projeto implementa um pipeline MLOps reprodutível para avaliar modelos estatísticos, modelos de Deep Learning e arquiteturas híbridas para previsão de séries temporais multivariadas.
 
-A principal contribuição consiste na utilização de modelos estatísticos para capturar a componente linear da série e modelos neurais para modelar os resíduos, permitindo comparar diferentes estratégias híbridas em múltiplos datasets públicos.
+A principal contribuição consiste na utilização de modelagem estatística para capturar a componente linear da série e modelos neurais para modelar os resíduos, permitindo comparar diferentes estratégias híbridas contra o melhor modelo individual de cada dataset.
+
+---
+
+**Autor:** Flávio Monteiro
+*Mestrando em Engenharia de Computação (PPGEC - UPE)*
