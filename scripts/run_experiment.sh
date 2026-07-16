@@ -1,7 +1,34 @@
 #!/bin/bash
 
-# Encerra o script se houver erro crítico
 set -e
+
+# ==============================================================================
+# FUNÇÃO AUXILIAR: Executa um comando e cronometra seu tempo de execução
+# ==============================================================================
+run_and_time() {
+    local step_name=$1
+    local cmd=$2
+    
+    echo "======================================================="
+    echo "⏳ Iniciando: $step_name"
+    echo "======================================================="
+    
+    local start_time=$(date +%s)
+    
+    # Executa o comando passado para a função
+    eval $cmd
+    
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - start_time))
+    local h=$((elapsed / 3600))
+    local m=$(((elapsed % 3600) / 60))
+    local s=$((elapsed % 60))
+    
+    echo "-------------------------------------------------------"
+    echo "⏱️  TEMPO GASTO EM [$step_name]: ${h}h ${m}m ${s}s"
+    echo "-------------------------------------------------------"
+    echo ""
+}
 
 # Loop infinito para manter o menu ativo
 while true; do
@@ -59,19 +86,34 @@ while true; do
         0) poetry run python src/ingestion/download_dataset.py ;;
         1)
             echo "🚀 Iniciando Execução Completa para $DATASET..."
-            systemd-inhibit poetry run python src/ingestion/download_dataset.py
-            systemd-inhibit poetry run python src/models/ets_baseline.py
-            systemd-inhibit poetry run python src/models/prophet_baseline.py
-            systemd-inhibit poetry run python src/models/arima_baseline.py
-            systemd-inhibit poetry run python src/models/nhits_residual.py
-            systemd-inhibit poetry run python src/models/hybrid_combiner.py
-            systemd-inhibit poetry run python src/models/hybrid_prophet_nhits.py
-            systemd-inhibit poetry run python src/models/deep_baselines.py
-            systemd-inhibit poetry run python src/metrics/evaluate_metrics.py
-            systemd-inhibit poetry run python src/visualization/plot_results.py
-            echo ""
+            
+            # Marca o tempo TOTAL de início
+            TOTAL_START=$(date +%s)
+
+            # Chama a função auxiliar para rodar e cronometrar cada etapa
+            run_and_time "Ingestão de Dados" "systemd-inhibit poetry run python src/ingestion/download_dataset.py"
+            run_and_time "AutoETS Baseline" "systemd-inhibit poetry run python src/models/ets_baseline.py"
+            run_and_time "Prophet Baseline" "systemd-inhibit poetry run python src/models/prophet_baseline.py"
+            run_and_time "ARIMA Baseline" "systemd-inhibit poetry run python src/models/arima_baseline.py"
+            run_and_time "N-HiTS (Treino nos Resíduos)" "systemd-inhibit poetry run python src/models/nhits_residual.py"
+            run_and_time "Combinação Híbrida (ARIMA+N-HiTS)" "systemd-inhibit poetry run python src/models/hybrid_combiner.py"
+            run_and_time "Combinação Híbrida (Prophet+N-HiTS)" "systemd-inhibit poetry run python src/models/hybrid_prophet_nhits.py"
+            run_and_time "Deep Learning Baselines" "systemd-inhibit poetry run python src/models/deep_baselines.py"
+            run_and_time "Avaliação de Métricas" "systemd-inhibit poetry run python src/metrics/evaluate_metrics.py"
+            run_and_time "Geração de Gráficos" "systemd-inhibit poetry run python src/visualization/plot_results.py"
+
+            # Calcula o tempo TOTAL
+            TOTAL_END=$(date +%s)
+            TOTAL_ELAPSED=$((TOTAL_END - TOTAL_START))
+            TOTAL_H=$((TOTAL_ELAPSED / 3600))
+            TOTAL_M=$(((TOTAL_ELAPSED % 3600) / 60))
+            TOTAL_S=$((TOTAL_ELAPSED % 60))
+
+            echo "======================================================="
             echo "🎉 Experimento Completo Finalizado com Sucesso!"
+            echo "⏱️  TEMPO TOTAL DE EXECUÇÃO: ${TOTAL_H}h ${TOTAL_M}m ${TOTAL_S}s"
             echo "📂 Resultados disponíveis na pasta results/"
+            echo "======================================================="
             ;;
         2) poetry run python src/models/arima_baseline.py ;;
         3) poetry run python src/models/ets_baseline.py ;;
