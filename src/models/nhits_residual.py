@@ -8,7 +8,6 @@ from neuralforecast import NeuralForecast
 from neuralforecast.models import NHITS
 
 warnings.filterwarnings("ignore")
-dataset_name = os.getenv("DATASET", "ETTh1")
 
 # Define a raiz do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -22,10 +21,27 @@ class HybridNHITSTrainer:
         self.resid_dir = BASE_DIR / self.config["results_paths"]["residuals"]
 
     def run(self):
-        print("\n🧠 [PASSO 2] Iniciando Janelamento e Treino do N-HiTS sobre os Resíduos")
+        # 1. Pega o valor do .env
+        dataset_env = os.getenv("DATASET", "ETTh1").strip()
 
-        # Filtramos para o ETTh1 nesta fase inicial
-        info = self.config["datasets"][dataset_name]
+        # 2. Configura a lista de execução (Batch ou Único)
+        if dataset_env.upper() == "ALL":
+            print("\n🚀 Modo BATCH detectado: Executando N-HiTS (Resíduos) para TODOS os datasets.")
+            datasets_to_run = list(self.config["datasets"].keys())
+        else:
+            datasets_to_run = [dataset_env]
+
+        # 3. Inicia o loop de treinamento para cada dataset
+        for dataset_name in datasets_to_run:
+            print(f"\n🧠 [PASSO 4] Iniciando Janelamento e Treino do N-HiTS sobre os Resíduos - {dataset_name}")
+
+            # Proteção contra chaves inválidas
+            if dataset_name not in self.config["datasets"]:
+                print(f"⚠️ Dataset {dataset_name} não encontrado no main_config.yaml. Pulando...")
+                continue
+
+            # Carrega as configurações específicas do dataset
+            info = self.config["datasets"][dataset_name]
 
         # 1. Carrega os resíduos (O erro não-linear extraído do ARIMA)
         resid_path = self.resid_dir / f"{dataset_name}_arima_residuals.csv"

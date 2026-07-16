@@ -13,10 +13,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 from src.utils.general import prepare_data
 
-warnings.filterwarnings("ignore")  # Silencia os avisos de convergência
-# Carrega as variáveis do arquivo .env para o os.environ
+warnings.filterwarnings("ignore")
 
-# O restante do seu código continua igual, usando o getenv:
 dataset_name = os.getenv("DATASET", "ETTh1")
 
 
@@ -34,21 +32,34 @@ class ArimaScientificBaseline:
         self.resid_dir = BASE_DIR / self.config["results_paths"]["residuals"]
         self.resid_dir.mkdir(parents=True, exist_ok=True)
 
-
     def run(self):
-        print("\n🔬 [PASSO 1] Iniciando ARIMA Baseline Científico")
-        print("Critério: Split em T - 720 (Horizonte Máximo)")
+        dataset_env = os.getenv("DATASET", "ETTh1").strip()
 
-        for name, info in self.config["datasets"].items():
-            # FILTRO: Rodar apenas o ETTh1 nesta fase inicial
-            if name != dataset_name:
+        if dataset_env.upper() == "ALL":
+            print("\n🚀 Modo BATCH detectado: Executando ARIMA Baseline para TODOS os datasets.")
+            datasets_to_run = list(self.config["datasets"].keys())
+        else:
+            datasets_to_run = [dataset_env]
+
+        print("\n🔬 [PASSO 1] Iniciando ARIMA Baseline Científico")
+        print("Critério: Split no Horizonte Máximo")
+
+        for name in datasets_to_run:
+            if name not in self.config["datasets"]:
+                print(f"⚠️ Dataset {name} não encontrado no main_config.yaml. Pulando...")
                 continue
 
+            info = self.config["datasets"][name]
             max_h = info.get("max_horizon", max(info["forecast_horizon"]))
 
             print(f"\n📊 Processando: {name} | H_max = {max_h}")
 
-            df_raw = pd.read_csv(BASE_DIR / info["path"])
+            raw_file = BASE_DIR / info["path"]
+            if not raw_file.exists():
+                print(f"⚠️ Arquivo bruto não encontrado para {name}: {raw_file}")
+                continue
+
+            df_raw = pd.read_csv(raw_file)
             df = prepare_data(df_raw, info, name)
 
             train_df = df.iloc[:-max_h]
@@ -63,19 +74,19 @@ class ArimaScientificBaseline:
             print(f"   > Ajustando ARIMA e gerando projeção recursiva para H={max_h}...")
             forecast_df = sf.forecast(df=train_df, h=max_h, fitted=True)
 
-            # RENOMEANDO AutoARIMA para ARIMA (Melhoria sugerida)
+            # RENOMEANDO AutoARIMA para ARIMA
             forecast_df = forecast_df.rename(columns={"AutoARIMA": "ARIMA"})
 
             # --- SALVANDO PREVISÕES ---
             forecast_path = self.forecast_dir / f"{name}_arima_predictions.csv"
             forecast_df.to_csv(forecast_path, index=False)
-            print(f"   ✅ Previsão salva em: {forecast_path.name} (Coluna renomeada para ARIMA)")
+            print(f"   ✅ Previsão salva em: {forecast_path.name}")
 
             # --- EXTRAÇÃO DE RESÍDUOS IN-SAMPLE ---
             print("   > Extraindo resíduos in-sample...")
             fitted = sf.forecast_fitted_values().reset_index()
 
-            # Calculando o resíduo (internamente a biblioteca ainda chama de AutoARIMA)
+            # Calculando o resíduo
             fitted["residual"] = fitted["y"] - fitted["AutoARIMA"]
 
             resid_path = self.resid_dir / f"{name}_arima_residuals.csv"
