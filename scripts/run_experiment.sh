@@ -56,7 +56,7 @@ while true; do
 
     echo ""
     case $OPCAO in
-        0) poetry run python src/data/download_dataset.py ;;
+        0) poetry run python src/ingestion/download_dataset.py ;;
         1)
             echo "🚀 Iniciando Execução Completa para $DATASET..."
             systemd-inhibit poetry run python src/ingestion/download_dataset.py

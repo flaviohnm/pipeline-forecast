@@ -1,4 +1,5 @@
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -7,8 +8,13 @@ import yaml
 from statsforecast import StatsForecast
 from statsforecast.models import AutoETS
 
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+sys.path.append(str(BASE_DIR))
+
+from src.utils.general import prepare_data
+
 warnings.filterwarnings("ignore")
-dataset_name = os.getenv("DATASET", "ETTh1")
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -21,42 +27,50 @@ class ETSBaselineTrainer:
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["ets"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
-    def prepare_data(self, df, info, name):
-        df_n = df[[info["date_column"], info["target_column"]]].copy()
-        df_n.columns = ["ds", "y"]
-        df_n["unique_id"] = name
-        df_n["ds"] = pd.to_datetime(df_n["ds"])
-        return df_n
-
     def run(self):
-        print(f"\n📈 Iniciando Treinamento: Baseline Estatística (AutoETS) - {dataset_name}")
+        dataset_env = os.getenv("DATASET", "ETTh1").strip()
 
-        info = self.config["datasets"][dataset_name]
+        if dataset_env.upper() == "ALL":
+            print("\n🚀 Modo BATCH detectado: Executando AutoETS para TODOS os datasets.")
+            datasets_to_run = list(self.config["datasets"].keys())
+        else:
+            datasets_to_run = [dataset_env]
 
-        raw_file = BASE_DIR / info["path"]
-        df_raw = pd.read_csv(raw_file)
-        df = self.prepare_data(df_raw, info, dataset_name)
+        for dataset_name in datasets_to_run:
+            print(f"\n📈 Iniciando Treinamento: Baseline Estatística (AutoETS) - {dataset_name}")
 
-        horizon = max(info["forecast_horizon"])  # 720
-        train_df = df.iloc[:-horizon]
+            # Verifica se o dataset existe no YAML para evitar KeyError
+            if dataset_name not in self.config["datasets"]:
+                print(f"⚠️ Dataset {dataset_name} não encontrado no main_config.yaml. Pulando...")
+                continue
 
-        # CORREÇÃO 2: Puxa a sazonalidade dinamicamente do YAML (Respeita 24, 96, 144...)
-        season_length = info.get("seasonal_period", 24)
+            info = self.config["datasets"][dataset_name]
 
-        # CORREÇÃO 1: Usa 'ZZA' (Erro Auto, Tendência Auto, Sazonalidade Aditiva)
-        # Isso impede que a tendência exploda infinitamente no horizonte de 720 passos
-        models = [AutoETS(season_length=season_length, model="ZZA")]
+            raw_file = BASE_DIR / info["path"]
+            if not raw_file.exists():
+                print(f"⚠️ Arquivo bruto não encontrado para {dataset_name}: {raw_file}")
+                continue
+                
+            df_raw = pd.read_csv(raw_file)
+            df = prepare_data(df_raw, info, dataset_name)
 
-        sf = StatsForecast(df=train_df, models=models, freq=info["freq"], n_jobs=-1)
+            horizon = max(info["forecast_horizon"])
+            train_df = df.iloc[:-horizon]
 
-        print(f"\n🚀 Calculando AutoETS (Sazonalidade: {season_length})...")
-        forecasts = sf.forecast(h=horizon)
+            season_length = info.get("seasonal_period", 24)
 
-        forecasts = forecasts.reset_index().rename(columns={"AutoETS": "ETS"})
+            models = [AutoETS(season_length=season_length, model="ZZA")]
 
-        out_file = self.forecast_dir / f"{dataset_name}_ets_predictions.csv"
-        forecasts.to_csv(out_file, index=False)
-        print(f"✅ Previsão ETS salva em: {self.forecast_dir.name}/{out_file.name}\n")
+            sf = StatsForecast(df=train_df, models=models, freq=info["freq"], n_jobs=-1)
+
+            print(f"🚀 Calculando AutoETS para {dataset_name} (Sazonalidade: {season_length})...")
+            forecasts = sf.forecast(h=horizon)
+
+            forecasts = forecasts.reset_index().rename(columns={"AutoETS": "ETS"})
+
+            out_file = self.forecast_dir / f"{dataset_name}_ets_predictions.csv"
+            forecasts.to_csv(out_file, index=False)
+            print(f"✅ Previsão ETS salva em: {self.forecast_dir.name}/{out_file.name}")
 
 
 if __name__ == "__main__":

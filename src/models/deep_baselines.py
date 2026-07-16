@@ -1,5 +1,6 @@
 import gc
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -7,6 +8,11 @@ import pandas as pd
 import yaml
 from neuralforecast import NeuralForecast
 from neuralforecast.models import LSTM, MLP, NHITS, Informer
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+sys.path.append(str(BASE_DIR))
+from src.utils.general import prepare_data
 
 warnings.filterwarnings("ignore")
 
@@ -21,12 +27,6 @@ class DLBaselinesTrainer:
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["deep_learning"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
-    def prepare_data(self, df, info, name):
-        df_n = df[[info["date_column"], info["target_column"]]].copy()
-        df_n.columns = ["ds", "y"]
-        df_n["unique_id"] = name
-        df_n["ds"] = pd.to_datetime(df_n["ds"])
-        return df_n
 
     def run(self):
         print("\n🤖 Iniciando Treinamento: Baselines de Deep Learning")
@@ -36,7 +36,7 @@ class DLBaselinesTrainer:
 
         raw_file = BASE_DIR / info["path"]
         df_raw = pd.read_csv(raw_file)
-        df = self.prepare_data(df_raw, info, dataset_name)
+        df = prepare_data(df_raw, info, dataset_name)
 
         horizon = max(info["forecast_horizon"])  # 720
         input_size = horizon * 2  # 1440

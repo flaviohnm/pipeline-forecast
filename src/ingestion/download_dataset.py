@@ -5,67 +5,80 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-# Define a raiz do projeto
+# Define caminhos base a partir da localização do script (src/ingestion)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-dataset_name = os.getenv("DATASET", "ETTh1")
+CONFIG_PATH = BASE_DIR / "config" / "main_config.yaml"
+DATA_DIR = BASE_DIR / "data"
 
+# Garante que a pasta data/ exista
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-class DataDownloader:
-    def __init__(self, config_path="config/main_config.yaml"):
-        with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+def baixar_dataset(dataset_name, info):
+    print(f"\n📥 Iniciando ingestão para: {dataset_name}")
+    url = info.get("url")
+    if not url:
+        print(f"⚠️ Nenhuma URL configurada para {dataset_name} no YAML. Pulando...")
+        return
 
-    def run(self):
-        print("\n📥 [PASSO 0] Ingestão de Dados (Lendo Configurações do YAML)")
+    arquivo_destino = DATA_DIR / f"{dataset_name}.csv"
 
-        for name, info in self.config["datasets"].items():
-            if name != dataset_name:
-                continue
+    if arquivo_destino.exists():
+        print(f"✅ O arquivo {dataset_name}.csv já existe na pasta data/. Pulando download.")
+        return
 
-            # Caminho onde o arquivo deve ser salvo
-            file_path = BASE_DIR / info["path"]
+    print(f"⏳ Baixando {dataset_name} a partir da URL...")
+    try:
+        # Usa um header de navegador para evitar bloqueios de bots
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            conteudo = response.read()
+        
+        with open(arquivo_destino, 'wb') as f:
+            f.write(conteudo)
+            
+        print(f"✅ Download concluído: data/{dataset_name}.csv")
 
-            # Garante que a pasta (ex: data/) exista
-            file_path.parent.mkdir(parents=True, exist_ok=True)
+        # Filtragem de colunas
+        print(f"🧹 Filtrando colunas essenciais para o dataset {dataset_name}...")
+        df = pd.read_csv(arquivo_destino)
+        colunas_necessarias = [info["date_column"], info["target_column"]]
+        
+        if all(col in df.columns for col in colunas_necessarias):
+            df = df[colunas_necessarias]
+            df.to_csv(arquivo_destino, index=False)
+            print(f"✅ {dataset_name} limpo e salvo com as colunas: {colunas_necessarias}.")
+        else:
+            print(f"⚠️ Aviso: As colunas {colunas_necessarias} não foram encontradas. Arquivo salvo sem alterações.")
 
-            if file_path.exists():
-                print(f"   ✅ {name} já está disponível em: {info['path']}")
-            else:
-                # Busca a URL diretamente do arquivo de configuração
-                url = info.get("download_url")
-
-                if url:
-                    print(f"   ⏳ Arquivo não encontrado. Baixando {name} a partir da URL configurada...")
-                    try:
-                        urllib.request.urlretrieve(url, file_path)
-                        print(f"   ✅ Download concluído com sucesso: {info['path']}")
-                    except Exception as e:
-                        print(f"   ❌ Erro ao baixar {name}: {e}")
-                else:
-                    print(f"   ⚠️ Nenhuma 'download_url' configurada para o dataset {name} no YAML.")
-
-            # --- O FILTRO DE INTEGRIDADE (GATEKEEPER) ---
-            print(f"   🧹 Filtrando colunas essenciais para o dataset {name}...")
-            try:
-                # Lê o arquivo e garante a extração apenas do estritamente necessário
-                df = pd.read_csv(file_path)
-                date_col = info["date_column"]
-                target_col = info["target_column"]
-
-                if date_col in df.columns and target_col in df.columns:
-                    df_filtered = df[[date_col, target_col]].copy()
-
-                    # Sobrescreve o dataset bruto para economizar memória nos treinamentos
-                    df_filtered.to_csv(file_path, index=False)
-                    print(f"   ✅ {name} limpo e salvo apenas com as colunas: [{date_col}, {target_col}].")
-                else:
-                    print(f"   ⚠️ AVISO: Colunas '{date_col}' ou '{target_col}' ausentes no CSV baixado!")
-            except Exception as e:
-                print(f"   ❌ Erro ao processar as colunas do arquivo: {e}")
-
-        print("-" * 60 + "\n")
-
+    except Exception as e:
+        print(f"❌ Erro ao baixar ou processar {dataset_name}: {e}")
 
 if __name__ == "__main__":
-    downloader = DataDownloader()
-    downloader.run()
+    print("\n📥 [PASSO 0] Ingestão de Dados (Lendo Configurações do YAML)")
+    print("-" * 60)
+
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"❌ Arquivo de configuração não encontrado em: {CONFIG_PATH}")
+        exit(1)
+
+    # Lê a variável de ambiente (padrão é ETTh1 se não encontrar o .env)
+    dataset_env = os.getenv("DATASET", "ETTh1").strip()
+
+    datasets_config = config.get("datasets", {})
+
+    if dataset_env.upper() == "ALL":
+        print("🚀 Modo BATCH detectado: Baixando TODOS os datasets configurados.")
+        for dataset_name, info in datasets_config.items():
+            baixar_dataset(dataset_name, info)
+    else:
+        # Modo Dataset Único
+        if dataset_env in datasets_config:
+            baixar_dataset(dataset_env, datasets_config[dataset_env])
+        else:
+            print(f"❌ Dataset '{dataset_env}' não encontrado no arquivo main_config.yaml.")
+
+    print("-" * 60)
+    print("🏁 Ingestão finalizada.")

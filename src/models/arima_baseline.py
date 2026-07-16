@@ -1,4 +1,5 @@
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -6,6 +7,11 @@ import pandas as pd
 import yaml
 from statsforecast import StatsForecast
 from statsforecast.models import AutoARIMA
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+sys.path.append(str(BASE_DIR))
+from src.utils.general import prepare_data
 
 warnings.filterwarnings("ignore")  # Silencia os avisos de convergência
 # Carrega as variáveis do arquivo .env para o os.environ
@@ -28,12 +34,6 @@ class ArimaScientificBaseline:
         self.resid_dir = BASE_DIR / self.config["results_paths"]["residuals"]
         self.resid_dir.mkdir(parents=True, exist_ok=True)
 
-    def prepare_data(self, df, info, name):
-        df_n = df[[info["date_column"], info["target_column"]]].copy()
-        df_n.columns = ["ds", "y"]
-        df_n["unique_id"] = name
-        df_n["ds"] = pd.to_datetime(df_n["ds"])
-        return df_n
 
     def run(self):
         print("\n🔬 [PASSO 1] Iniciando ARIMA Baseline Científico")
@@ -49,7 +49,7 @@ class ArimaScientificBaseline:
             print(f"\n📊 Processando: {name} | H_max = {max_h}")
 
             df_raw = pd.read_csv(BASE_DIR / info["path"])
-            df = self.prepare_data(df_raw, info, name)
+            df = prepare_data(df_raw, info, name)
 
             train_df = df.iloc[:-max_h]
             test_df = df.iloc[-max_h:]

@@ -26,7 +26,7 @@ datasets:
   # =========================================================
   AirPassengers:
     path: "data/AirPassengers.csv"
-    download_url: "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv"
+    url: "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv"
     target_column: "Passengers"
     date_column: "Month"
     freq: "MS" # Month Start (Frequência Mensal)
@@ -41,7 +41,7 @@ datasets:
   # =========================================================
   ETTh1:
     path: "data/ETTh1.csv"
-    download_url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv"
+    url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv"
     target_column: "OT"
     date_column: "date"
     freq: "h"
@@ -52,7 +52,7 @@ datasets:
 
   ETTh2:
     path: "data/ETTh2.csv"
-    download_url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh2.csv"
+    url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh2.csv"
     target_column: "OT"
     date_column: "date"
     freq: "h"
@@ -63,7 +63,7 @@ datasets:
 
   ETTm1:
     path: "data/ETTm1.csv"
-    download_url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTm1.csv"
+    url: "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTm1.csv"
     target_column: "OT"
     date_column: "date"
     freq: "t"
@@ -74,7 +74,7 @@ datasets:
 
   ECL:
     path: "data/ECL.csv"
-    download_url: "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/electricity.csv"
+    url: "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/electricity.csv"
     target_column: "OT"
     date_column: "date"
     freq: "h"
@@ -85,7 +85,7 @@ datasets:
 
   Weather:
     path: "data/Weather.csv"
-    download_url: "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/weather.csv"
+    url: "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/weather.csv"
     target_column: "OT"
     date_column: "date"
     freq: "10t"

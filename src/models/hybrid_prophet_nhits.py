@@ -1,5 +1,6 @@
 import gc
 import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -8,6 +9,11 @@ import yaml
 from neuralforecast import NeuralForecast
 from neuralforecast.models import NHITS
 from prophet import Prophet
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+sys.path.append(str(BASE_DIR))
+from src.utils.general import prepare_data
 
 warnings.filterwarnings("ignore")
 dataset_name = os.getenv("DATASET", "ETTh1")
@@ -22,12 +28,6 @@ class HybridProphetNHITSTrainer:
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["hybrid_prophet"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
-    def prepare_data(self, df, info, name):
-        df_n = df[[info["date_column"], info["target_column"]]].copy()
-        df_n.columns = ["ds", "y"]
-        df_n["unique_id"] = name
-        df_n["ds"] = pd.to_datetime(df_n["ds"])
-        return df_n
 
     def run(self):
         print(f"\n🧬 Iniciando Treinamento: Híbrido (Prophet + N-HiTS) - {dataset_name}")
@@ -35,7 +35,7 @@ class HybridProphetNHITSTrainer:
         info = self.config["datasets"][dataset_name]
         raw_file = BASE_DIR / info["path"]
         df_raw = pd.read_csv(raw_file)
-        df = self.prepare_data(df_raw, info, dataset_name)
+        df = prepare_data(df_raw, info, dataset_name)
 
         horizon = max(info["forecast_horizon"])
         input_size = horizon * 2
