@@ -44,7 +44,7 @@ class HybridNHITSTrainer:
 
             # 3. Carrega os resíduos (O erro não-linear extraído do ARIMA)
             resid_path = self.resid_dir / f"{name}_arima_residuals.csv"
-
+            
             if not resid_path.exists():
                 print(f"⚠️ Arquivo de resíduos não encontrado em: {resid_path}. Pulando...")
                 continue
@@ -56,9 +56,18 @@ class HybridNHITSTrainer:
             horizon = info["max_horizon"]
             input_size = horizon * 2
 
+            # =======================================================
+            # TRAVA DE SEGURANÇA: Compatibilidade de Janela PyTorch
+            # O val_size não pode ser matematicamente inferior ao horizonte
+            # =======================================================
+            safe_val_size = info.get("val_size", horizon)
+            if safe_val_size < horizon:
+                safe_val_size = horizon
+
             print("\n⚙️ Configuração das Janelas MIMO:")
             print(f"   > Input Window (Passado a observar): {input_size} pontos")
             print(f"   > Output Window (Futuro a prever): {horizon} pontos")
+            print(f"   > Validation Size (Protegido): {safe_val_size} pontos")
 
             # 4. Configura a Rede Neural N-HiTS
             models = [
@@ -78,7 +87,7 @@ class HybridNHITSTrainer:
 
             # 6. Treina a rede sobre os resíduos
             print("\n🚀 A iniciar o treino da Rede Neural...")
-            nf.fit(df=df_res, val_size=info.get("val_size", 0))
+            nf.fit(df=df_res, val_size=safe_val_size)
 
             # 7. Previsão dos resíduos futuros
             print("🔮 A prever os resíduos futuros...")
