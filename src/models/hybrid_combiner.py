@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -11,9 +10,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # Injeta a raiz do projeto no path do Python se necessário
 sys.path.append(str(BASE_DIR))
 
+# Importando o novo controlador de execução
+from src.utils.general import get_datasets
+
 
 class HybridCombiner:
     def __init__(self, config_path="config/main_config.yaml"):
+        # Mantemos o YAML apenas para as configurações de caminhos das pastas (results_paths)
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
@@ -24,23 +27,21 @@ class HybridCombiner:
         self.hybrid_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self):
-        # 1. Recupera o dataset ativo do ambiente (.env)
-        dataset_env = os.getenv("DATASET", "ETTh1").strip()
-
-        # 2. Configura a lista de datasets para rodar (Batch ou Único)
-        if dataset_env.upper() == "ALL":
-            print("\n🚀 Modo BATCH detectado: Combinando ARIMA + N-HiTS para TODOS os datasets.")
-            datasets_to_run = list(self.config["datasets"].keys())
-        else:
-            datasets_to_run = [dataset_env]
-
         print("\n🔗 [PASSO 5] Combinando as Previsões (ARIMA + N-HiTS)")
         print("Equação do Artigo: Y_final = ARIMA (Linear) + N-HiTS (Não-Linear)")
 
-        for name in datasets_to_run:
-            if name not in self.config["datasets"]:
-                print(f"⚠️ Dataset {name} não encontrado no main_config.yaml. Pulando...")
-                continue
+        # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO (Substitui o .env)
+        datasets_to_run = get_datasets()
+
+        if not datasets_to_run:
+            print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
+            return
+
+        # 2. ITERAÇÃO LIMPA
+        for name, info in datasets_to_run.items():
+            print(f"\n=======================================")
+            print(f"📊 Processando combinação para: {name}")
+            print(f"=======================================")
 
             # Caminhos dos arquivos específicos deste dataset
             arima_file = self.arima_dir / f"{name}_arima_predictions.csv"
@@ -52,10 +53,10 @@ class HybridCombiner:
                 print(f"⚠️ Previsões do ARIMA não encontradas para {name} em: {arima_file.name}. Pulando combinação.")
                 continue
             if not nhits_file.exists():
-                print(f"⚠️ Previsões de resíduos do N-HiTS não encontradas para {name} em: {nhits_file.name}. Pulando combinação.")
+                print(
+                    f"⚠️ Previsões de resíduos do N-HiTS não encontradas para {name} em: {nhits_file.name}. Pulando combinação."
+                )
                 continue
-
-            print(f"\n📊 Processando combinação para: {name}")
 
             # 4. Carrega as Previsões do ARIMA (A Base Linear)
             df_arima = pd.read_csv(arima_file)
@@ -73,7 +74,9 @@ class HybridCombiner:
                 df_final["Hybrid_ARIMA_NHITS"] = df_final["ARIMA"] + df_final["NHITS"]
             else:
                 # Fallback caso a nomenclatura das colunas no arquivo de resíduos do N-HiTS use outra chave
-                col_nhits = [col for col in df_final.columns if col not in ["ds", "ARIMA", "unique_id_x", "unique_id_y"]][0]
+                col_nhits = [
+                    col for col in df_final.columns if col not in ["ds", "ARIMA", "unique_id_x", "unique_id_y"]
+                ][0]
                 df_final["Hybrid_ARIMA_NHITS"] = df_final["ARIMA"] + df_final[col_nhits]
 
             # 8. Salvar o resultado consolidado

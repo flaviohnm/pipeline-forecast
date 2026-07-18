@@ -1,5 +1,4 @@
 import gc
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -9,135 +8,149 @@ import yaml
 from neuralforecast import NeuralForecast
 from neuralforecast.models import LSTM, MLP, NHITS, Informer
 
+# Define a raiz do projeto e o sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
 sys.path.append(str(BASE_DIR))
-from src.utils.general import prepare_data
+
+# Importando o novo controlador de execução e o preparador
+from src.utils.general import get_datasets, prepare_data
 
 warnings.filterwarnings("ignore")
-
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class DLBaselinesTrainer:
     def __init__(self, config_path="config/main_config.yaml"):
+        # Mantemos o YAML para pegar caminhos de salvamento e a random_seed global
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["deep_learning"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
-
     def run(self):
         print("\n🤖 Iniciando Treinamento: Baselines de Deep Learning")
 
-        dataset_name = os.getenv("DATASET", "ETTh1")
-        info = self.config["datasets"][dataset_name]
+        # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
+        datasets_to_run = get_datasets()
 
-        raw_file = BASE_DIR / info["path"]
-        df_raw = pd.read_csv(raw_file)
-        df = prepare_data(df_raw, info, dataset_name)
+        if not datasets_to_run:
+            print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
+            return
 
-        horizon = max(info["forecast_horizon"])  # 720
-        input_size = horizon * 2  # 1440
+        # 2. ITERAÇÃO LIMPA
+        for name, info in datasets_to_run.items():
+            print(f"\n=======================================")
+            print(f"📊 Processando Dataset: {name}")
+            print(f"=======================================")
 
-        train_df = df.iloc[:-horizon]
+            raw_file = BASE_DIR / info["path"]
 
-        # Cria um DataFrame base apenas com as datas do horizonte futuro para receber as previsões
-        future_dates = df.iloc[-horizon:]["ds"].reset_index(drop=True)
-        final_forecasts = pd.DataFrame({"ds": future_dates})
+            if not raw_file.exists():
+                print(f"⚠️ Arquivo bruto não encontrado para {name}: {raw_file}. Pulando...")
+                continue
 
-        print(f"\n📊 Dataset: {dataset_name} | Horizonte: {horizon}")
+            df_raw = pd.read_csv(raw_file)
+            df = prepare_data(df_raw, info, name)
 
-        pl_trainer_kwargs = {
-            "num_sanity_val_steps": 0,
-            "enable_progress_bar": True,
-            "limit_val_batches": 0.0,
-        }
+            # Usando o max_horizon que já vem configurado do general.py
+            horizon = info["max_horizon"]
+            input_size = horizon * 2  
 
-        model_definitions = {
-            "MLP": MLP(
-                h=horizon,
-                input_size=input_size,
-                max_steps=300,
-                batch_size=8,
-                scaler_type="standard",
-                accelerator="cpu",
-                random_seed=self.config["random_seed"],
-                num_workers_loader=0,
-                **pl_trainer_kwargs,
-            ),
-            "LSTM": LSTM(
-                h=horizon,
-                input_size=input_size,
-                max_steps=300,
-                batch_size=1,
-                encoder_hidden_size=64,
-                scaler_type="standard",
-                accelerator="cpu",
-                random_seed=self.config["random_seed"],
-                num_workers_loader=0,
-                **pl_trainer_kwargs,
-            ),
-            "NHITS": NHITS(
-                h=horizon,
-                input_size=input_size,
-                max_steps=500,
-                batch_size=8,
-                scaler_type="standard",
-                accelerator="cpu",
-                random_seed=self.config["random_seed"],
-                num_workers_loader=0,
-                **pl_trainer_kwargs,
-            ),
-            "Informer": Informer(
-                h=horizon,
-                input_size=horizon,
-                max_steps=300,
-                batch_size=2,
-                scaler_type="standard",
-                accelerator="cpu",
-                random_seed=self.config["random_seed"],
-                num_workers_loader=0,
-                **pl_trainer_kwargs,
-            ),
-        }
+            train_df = df.iloc[:-horizon]
 
-        # --- LOOP SEQUENCIAL COM GARBAGE COLLECTION ---
-        for model_name, model_instance in model_definitions.items():
-            print(f"\n🚀 Treinando modelo: {model_name}...")
+            # Cria um DataFrame base apenas com as datas do horizonte futuro para receber as previsões
+            future_dates = df.iloc[-horizon:]["ds"].reset_index(drop=True)
+            final_forecasts = pd.DataFrame({"ds": future_dates})
 
-            nf = NeuralForecast(models=[model_instance], freq=info["freq"])
+            print(f"📈 Horizonte: {horizon} | Tamanho de Entrada (Input Size): {input_size}")
 
-            # Treinamento: Removemos o val_size para o PyTorch não tentar validar e explodir a RAM
-            nf.fit(df=train_df)
+            pl_trainer_kwargs = {
+                "num_sanity_val_steps": 0,
+                "enable_progress_bar": True,
+                "limit_val_batches": 0.0,
+            }
 
-            print(f"🔮 Prevendo os próximos {horizon} pontos com {model_name}...")
+            model_definitions = {
+                "MLP": MLP(
+                    h=horizon,
+                    input_size=input_size,
+                    max_steps=300,
+                    batch_size=8,
+                    scaler_type="standard",
+                    accelerator="cpu",
+                    random_seed=self.config["random_seed"],
+                    num_workers_loader=0,
+                    **pl_trainer_kwargs,
+                ),
+                "LSTM": LSTM(
+                    h=horizon,
+                    input_size=input_size,
+                    max_steps=300,
+                    batch_size=1,
+                    encoder_hidden_size=64,
+                    scaler_type="standard",
+                    accelerator="cpu",
+                    random_seed=self.config["random_seed"],
+                    num_workers_loader=0,
+                    **pl_trainer_kwargs,
+                ),
+                "NHITS": NHITS(
+                    h=horizon,
+                    input_size=input_size,
+                    max_steps=500,
+                    batch_size=8,
+                    scaler_type="standard",
+                    accelerator="cpu",
+                    random_seed=self.config["random_seed"],
+                    num_workers_loader=0,
+                    **pl_trainer_kwargs,
+                ),
+                "Informer": Informer(
+                    h=horizon,
+                    input_size=horizon,
+                    max_steps=300,
+                    batch_size=2,
+                    scaler_type="standard",
+                    accelerator="cpu",
+                    random_seed=self.config["random_seed"],
+                    num_workers_loader=0,
+                    **pl_trainer_kwargs,
+                ),
+            }
 
-            # OTIMIZAÇÃO DE PREDICAO: Passamos apenas a janela histórica estritamente necessária (input_size)
-            # Isso impede que o PyTorch tente carregar milhares de linhas na memória RAM durante a inferência.
-            # O input_size é 2x o horizonte. Se h=720, passamos os últimos 1440 pontos.
-            context_df = train_df.tail(input_size)
+            # --- LOOP SEQUENCIAL COM GARBAGE COLLECTION ---
+            for model_name, model_instance in model_definitions.items():
+                print(f"\n🚀 Treinando modelo: {model_name}...")
 
-            # Realizamos a previsão apenas com o contexto enxuto
-            preds = nf.predict(df=context_df).reset_index()
+                nf = NeuralForecast(models=[model_instance], freq=info["freq"])
 
-            final_forecasts[model_name] = preds[model_name].values
+                # Treinamento
+                nf.fit(df=train_df)
 
-            print(f"🧹 Limpando a memória RAM alocada pelo {model_name}...")
-            del nf
-            del model_instance
-            del preds
-            del context_df
-            gc.collect()
+                print(f"🔮 Prevendo os próximos {horizon} pontos com {model_name}...")
 
-        out_file = self.forecast_dir / f"{dataset_name}_deep_predictions.csv"
+                # OTIMIZAÇÃO DE PREDICAÇÃO: Passamos apenas a janela histórica
+                context_df = train_df.tail(input_size)
+                preds = nf.predict(df=context_df).reset_index()
 
-        # Adiciona a coluna unique_id no final para manter a compatibilidade
-        final_forecasts.insert(0, "unique_id", dataset_name)
-        final_forecasts.to_csv(out_file, index=False)
+                final_forecasts[model_name] = preds[model_name].values
 
-        print(f"\n✅ Todas as previsões salvas com segurança em: {self.forecast_dir.name}/{out_file.name}\n")
+                print(f"🧹 Limpando a memória RAM alocada pelo {model_name}...")
+                del nf
+                del model_instance
+                del preds
+                del context_df
+                gc.collect()
+
+            out_file = self.forecast_dir / f"{name}_deep_predictions.csv"
+
+            # Adiciona a coluna unique_id no final para manter a compatibilidade
+            final_forecasts.insert(0, "unique_id", name)
+            final_forecasts.to_csv(out_file, index=False)
+
+            print(f"\n✅ Todas as previsões para {name} foram salvas com segurança em: {self.forecast_dir.name}/{out_file.name}")
+
+        print("\n🏁 Processo de Baselines de Deep Learning Finalizado!\n")
 
 
 if __name__ == "__main__":

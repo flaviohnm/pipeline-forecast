@@ -1,4 +1,4 @@
-import os
+import sys
 import warnings
 from pathlib import Path
 
@@ -6,12 +6,19 @@ import numpy as np
 import pandas as pd
 import yaml
 
-warnings.filterwarnings("ignore")
+# Define a raiz do projeto e ajusta o sys.path para importar a pasta src
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(BASE_DIR))
+
+# Importando o novo controlador de execução
+from src.utils.general import get_datasets
+
+warnings.filterwarnings("ignore")
 
 
 class MetricsMultiHorizon:
     def __init__(self, config_path="config/main_config.yaml"):
+        # Mantemos o YAML para mapear onde os resultados de cada modelo estão salvos
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
@@ -30,17 +37,15 @@ class MetricsMultiHorizon:
         mae = np.mean(np.abs(y_true_scaled - y_pred_scaled))
         return mse, mae
 
-    def process_dataset(self, current_dataset):
+    def process_dataset(self, current_dataset, info):
         """Processa as métricas de um único dataset de forma isolada."""
         print(f"\n📊 Processando: {current_dataset}...")
 
         # Verifica se as previsões base (Híbrido) existem para este dataset
         hybrid_file = self.hybrid_dir / f"{current_dataset}_hybrid_predictions.csv"
         if not hybrid_file.exists():
-            print(f"   ⏩ Pulando {current_dataset}: Arquivo base de previsões não encontrado.")
+            print(f"   ⏩ Pulando {current_dataset}: Arquivo base de previsões (ARIMA+NHITS) não encontrado.")
             return
-
-        info = self.config["datasets"][current_dataset]
 
         # 1. Carrega Híbrido e ARIMA
         df_preds = pd.read_csv(hybrid_file)
@@ -88,6 +93,7 @@ class MetricsMultiHorizon:
         # Cruza tudo pela data exata
         df_eval = pd.merge(df_preds, df_raw, on="ds", how="inner")
 
+        # Aqui usamos a lista de horizontes para fatiar o dataset
         horizons = info.get("forecast_horizon", [96, 192, 336, 720])
         results = []
 
@@ -103,6 +109,7 @@ class MetricsMultiHorizon:
             "Híbrido (Prophet + N-HiTS)": "Hybrid_Prophet_NHITS",
         }
 
+        # O Loop de Fatiamento (Slice Later)
         for h in horizons:
             df_h = df_eval.head(h)
             for model_name, col_name in model_columns.items():
@@ -116,24 +123,22 @@ class MetricsMultiHorizon:
 
         out_file = self.metrics_dir / f"{current_dataset}_evaluation_complete.csv"
         df_results.to_csv(out_file, index=False)
-        print(f"💾 Salvo em: {out_file.name}")
+        print(f"💾 Salvo em: {self.metrics_dir.name}/{out_file.name}")
 
     def run(self):
-        print("\n📈 [PASSO 4] Avaliação Multi-Horizonte (Escala Acadêmica Z-Score)")
+        print("\n📈 [PASSO 8] Avaliação Multi-Horizonte (Escala Acadêmica Z-Score)")
 
-        # Lê a variável de ambiente. O padrão continua sendo ETTh1.
-        target_dataset = os.getenv("METRICS", "ETTh1").strip()
+        # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
+        datasets_to_run = get_datasets()
 
-        # Roteamento inteligente de execução
-        if target_dataset.upper() == "ALL":
-            print("🚀 Modo BATCH detectado: Executando avaliação para TODOS os datasets configurados.")
-            datasets_to_run = list(self.config["datasets"].keys())
-        else:
-            datasets_to_run = [target_dataset]
+        if not datasets_to_run:
+            print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
+            return
 
-        for ds_name in datasets_to_run:
+        # 2. ITERAÇÃO LIMPA
+        for ds_name, info in datasets_to_run.items():
             try:
-                self.process_dataset(ds_name)
+                self.process_dataset(ds_name, info)
             except Exception as e:
                 print(f"   ❌ Erro ao processar o dataset {ds_name}: {e}")
 

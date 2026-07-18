@@ -1,5 +1,4 @@
 import gc
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -14,13 +13,15 @@ from prophet import Prophet
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
-from src.utils.general import prepare_data
+# Importando o novo controlador de execução e o preparador
+from src.utils.general import get_datasets, prepare_data
 
 warnings.filterwarnings("ignore")
 
 
 class HybridProphetNHITSTrainer:
     def __init__(self, config_path="config/main_config.yaml"):
+        # Mantemos o YAML apenas para caminhos de diretórios e a random_seed global
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
@@ -28,26 +29,21 @@ class HybridProphetNHITSTrainer:
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self):
-        # 1. Recupera o dataset ativo do ambiente
-        dataset_env = os.getenv("DATASET", "ETTh1").strip()
+        print("\n🧬 Iniciando Treinamento: Híbrido (Prophet + N-HiTS)")
 
-        # 2. Configura a lista de execução (Batch ou Único)
-        if dataset_env.upper() == "ALL":
-            print("\n🚀 Modo BATCH detectado: Executando Híbrido (Prophet + N-HiTS) para TODOS os datasets.")
-            datasets_to_run = list(self.config["datasets"].keys())
-        else:
-            datasets_to_run = [dataset_env]
+        # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
+        datasets_to_run = get_datasets()
 
-        # 3. Itera sobre cada dataset individualmente
-        for name in datasets_to_run:
-            print(f"\n🧬 Iniciando Treinamento: Híbrido (Prophet + N-HiTS) - {name}")
+        if not datasets_to_run:
+            print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
+            return
 
-            # Proteção contra chaves inválidas no YAML
-            if name not in self.config["datasets"]:
-                print(f"⚠️ Dataset {name} não encontrado no main_config.yaml. Pulando...")
-                continue
+        # 2. ITERAÇÃO LIMPA
+        for name, info in datasets_to_run.items():
+            print(f"\n=======================================")
+            print(f"🧬 Processando Híbrido para: {name}")
+            print(f"=======================================")
 
-            info = self.config["datasets"][name]
             raw_file = BASE_DIR / info["path"]
 
             # Proteção se o dataset não tiver sido baixado
@@ -58,7 +54,8 @@ class HybridProphetNHITSTrainer:
             df_raw = pd.read_csv(raw_file)
             df = prepare_data(df_raw, info, name)
 
-            horizon = max(info["forecast_horizon"])
+            # Usando o max_horizon que já vem configurado do general.py
+            horizon = info["max_horizon"]
             input_size = horizon * 2
             train_df = df.iloc[:-horizon]
 

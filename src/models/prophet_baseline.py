@@ -1,27 +1,24 @@
-import os
+import sys
 import warnings
 from pathlib import Path
-import sys
 
 import pandas as pd
 import yaml
 from prophet import Prophet
 
-
+# Define a raiz do projeto e ajusta o sys.path para importar a pasta src
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
 sys.path.append(str(BASE_DIR))
 
-from src.utils.general import prepare_data
+# Importando o novo controlador de execução e preparador
+from src.utils.general import get_datasets, prepare_data
 
 warnings.filterwarnings("ignore")
-dataset_name = os.getenv("DATASET", "ETTh1")
-
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class ProphetBaselineTrainer:
     def __init__(self, config_path="config/main_config.yaml"):
+        # Mantemos o YAML apenas para as configurações de caminhos das pastas (results_paths)
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
@@ -29,55 +26,52 @@ class ProphetBaselineTrainer:
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self):
-        # 1. Pega o valor do .env
-        dataset_env = os.getenv("DATASET", "ETTh1").strip()
+        print("\n🔮 Iniciando Treinamento: Baseline Estatística (Prophet)")
 
-        # 2. Se for ALL, monta a lista com as chaves reais do YAML. Caso contrário, usa apenas o selecionado.
-        if dataset_env.upper() == "ALL":
-            print("\n🚀 Modo BATCH detectado: Executando Prophet para TODOS os datasets.")
-            datasets_to_run = list(self.config["datasets"].keys())
-        else:
-            datasets_to_run = [dataset_env]
+        # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
+        datasets_to_run = get_datasets()
 
-        # 3. Itera sobre a lista de datasets válidos
-        for dataset_name in datasets_to_run:
-            print(f"\n🔮 Iniciando Treinamento: Baseline (Prophet) - {dataset_name}")
+        if not datasets_to_run:
+            print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
+            return
 
-            # 4. Proteção contra chaves inválidas (caso 'ALL' ou outra string entre na lista por engano)
-            if dataset_name not in self.config["datasets"]:
-                print(f"⚠️ Dataset {dataset_name} não encontrado no main_config.yaml. Pulando...")
-                continue
-
-            info = self.config["datasets"][dataset_name]
+        # 2. ITERAÇÃO LIMPA
+        for name, info in datasets_to_run.items():
+            print(f"\n=======================================")
+            print(f"🔮 Processando Prophet para: {name}")
+            print(f"=======================================")
 
             raw_file = BASE_DIR / info["path"]
             if not raw_file.exists():
-                print(f"⚠️ Arquivo bruto não encontrado para {dataset_name}: {raw_file}")
+                print(f"⚠️ Arquivo bruto não encontrado para {name}: {raw_file}. Pulando...")
                 continue
 
             df_raw = pd.read_csv(raw_file)
-            df = prepare_data(df_raw, info, dataset_name)
+            df = prepare_data(df_raw, info, name)
 
-        horizon = max(info["forecast_horizon"])
-        train_df = df.iloc[:-horizon]
+            # Usando o max_horizon que já vem configurado do general.py
+            horizon = info["max_horizon"]
+            train_df = df.iloc[:-horizon]
 
-        print("\n🚀 Treinando o modelo Prophet...")
-        # O Prophet descobre a sazonalidade automaticamente por padrão
-        model = Prophet()
-        model.fit(train_df)
+            print("🚀 Treinando o modelo Prophet...")
+            # O Prophet descobre a sazonalidade automaticamente por padrão
+            model = Prophet()
+            model.fit(train_df)
 
-        print(f"🔮 Prevendo os próximos {horizon} pontos com Prophet...")
-        # Cria um dataframe apenas com as datas futuras
-        future = model.make_future_dataframe(periods=horizon, freq=info["freq"], include_history=False)
-        forecast = model.predict(future)
+            print(f"🔮 Prevendo os próximos {horizon} pontos com Prophet...")
+            # Cria um dataframe apenas com as datas futuras
+            future = model.make_future_dataframe(periods=horizon, freq=info["freq"], include_history=False)
+            forecast = model.predict(future)
 
-        # Formata a saída para o padrão do nosso avaliador
-        final_forecast = forecast[["ds", "yhat"]].rename(columns={"yhat": "Prophet"})
-        final_forecast.insert(0, "unique_id", dataset_name)
+            # Formata a saída para o padrão do nosso avaliador
+            final_forecast = forecast[["ds", "yhat"]].rename(columns={"yhat": "Prophet"})
+            final_forecast.insert(0, "unique_id", name)
 
-        out_file = self.forecast_dir / f"{dataset_name}_prophet_predictions.csv"
-        final_forecast.to_csv(out_file, index=False)
-        print(f"✅ Previsão Prophet salva em: {self.forecast_dir.name}/{out_file.name}\n")
+            out_file = self.forecast_dir / f"{name}_prophet_predictions.csv"
+            final_forecast.to_csv(out_file, index=False)
+            print(f"✅ Previsão Prophet salva em: {self.forecast_dir.name}/{out_file.name}")
+
+        print("\n🏁 Processo de Baselines do Prophet Finalizado!\n")
 
 
 if __name__ == "__main__":

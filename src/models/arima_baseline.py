@@ -1,4 +1,3 @@
-import os
 import sys
 import warnings
 from pathlib import Path
@@ -8,22 +7,19 @@ import yaml
 from statsforecast import StatsForecast
 from statsforecast.models import AutoARIMA
 
+# Define a raiz do projeto e o sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
 sys.path.append(str(BASE_DIR))
-from src.utils.general import prepare_data
+
+# Importando o novo controlador de execução e o preparador de dados
+from src.utils.general import get_datasets, prepare_data
 
 warnings.filterwarnings("ignore")
-
-dataset_name = os.getenv("DATASET", "ETTh1")
-
-
-# Define a raiz do projeto
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class ArimaScientificBaseline:
     def __init__(self, config_path="config/main_config.yaml"):
+        # Mantemos a leitura do YAML apenas para mapear as pastas de saída (results_paths)
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
@@ -33,30 +29,27 @@ class ArimaScientificBaseline:
         self.resid_dir.mkdir(parents=True, exist_ok=True)
 
     def run(self):
-        dataset_env = os.getenv("DATASET", "ETTh1").strip()
-
-        if dataset_env.upper() == "ALL":
-            print("\n🚀 Modo BATCH detectado: Executando ARIMA Baseline para TODOS os datasets.")
-            datasets_to_run = list(self.config["datasets"].keys())
-        else:
-            datasets_to_run = [dataset_env]
-
         print("\n🔬 [PASSO 1] Iniciando ARIMA Baseline Científico")
         print("Critério: Split no Horizonte Máximo")
 
-        for name in datasets_to_run:
-            if name not in self.config["datasets"]:
-                print(f"⚠️ Dataset {name} não encontrado no main_config.yaml. Pulando...")
-                continue
+        # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO (Substitui o .env)
+        datasets_to_run = get_datasets()
 
-            info = self.config["datasets"][name]
-            max_h = info.get("max_horizon", max(info["forecast_horizon"]))
+        if not datasets_to_run:
+            print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
+            return
 
-            print(f"\n📊 Processando: {name} | H_max = {max_h}")
+        # 2. ITERAÇÃO LIMPA
+        for name, info in datasets_to_run.items():
+            max_h = info["max_horizon"]
+
+            print(f"\n=============================================")
+            print(f"📊 Processando: {name} | H_max = {max_h}")
+            print(f"=============================================")
 
             raw_file = BASE_DIR / info["path"]
             if not raw_file.exists():
-                print(f"⚠️ Arquivo bruto não encontrado para {name}: {raw_file}")
+                print(f"⚠️ Arquivo bruto não encontrado para {name}: {raw_file}. Pulando...")
                 continue
 
             df_raw = pd.read_csv(raw_file)
