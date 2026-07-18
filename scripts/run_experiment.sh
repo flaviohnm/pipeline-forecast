@@ -46,20 +46,11 @@ while true; do
         exit 1
     fi
 
-    # --- 2. INJEÇÃO NATIVA DO .ENV ---
-    if [ ! -f .env ]; then
-        echo "⚠️ Arquivo .env não encontrado. Criando um com DATASET=ETTh1..."
-        echo "DATASET=ETTh1" > .env
-    fi
-
-    # Lê o arquivo .env e exporta as variáveis para a memória
-    export $(grep -v '^#' .env | xargs)
-
     echo "✅ Ambiente gerenciado pelo Poetry."
-    echo "🎯 DATASET ATIVO (Lido do .env): $DATASET"
+    echo "🎯 CONTROLE DE DATASETS: Gerenciado pelo arquivo src/utils/general.py"
     echo ""
 
-    # --- 3. Menu Interativo ---
+    # --- 2. Menu Interativo ---
     echo "Escolha a etapa do experimento que deseja executar:"
     echo ""
     echo "  [0]  📥 Passo 0: Baixar Datasets (Ingestão)"
@@ -85,7 +76,7 @@ while true; do
     case $OPCAO in
         0) poetry run python src/ingestion/download_dataset.py ;;
         1)
-            echo "🚀 Iniciando Execução Completa para $DATASET..."
+            echo "🚀 Iniciando Execução Completa (conforme configurado em general.py)..."
             
             # Marca o tempo TOTAL de início
             TOTAL_START=$(date +%s)
