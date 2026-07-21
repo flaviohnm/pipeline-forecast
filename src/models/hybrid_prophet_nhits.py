@@ -87,10 +87,11 @@ class HybridProphetNHITSTrainer:
             nhits_model = NHITS(
                 h=horizon,
                 input_size=input_size,
-                max_steps=500,
-                batch_size=8,
+                max_steps=400,
+                batch_size=32,
                 scaler_type="standard",
                 accelerator="cpu",
+                early_stop_patience_steps=3,
                 random_seed=self.config["random_seed"],
                 num_workers_loader=0,
                 **pl_trainer_kwargs,
