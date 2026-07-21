@@ -5,7 +5,7 @@ import pandas as pd
 # ==============================================================================
 # Para rodar todos os datasets, use: ["ALL"]
 # Para rodar datasets específicos, use: ["AirPassengers", "ETTh1", "Weather"]
-EXECUTION_LIST = ["ALL"]
+EXECUTION_LIST = ["ETTh1"]
 
 
 # ==============================================================================

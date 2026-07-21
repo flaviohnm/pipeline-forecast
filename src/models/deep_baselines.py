@@ -58,16 +58,25 @@ class DLBaselinesTrainer:
 
             train_df = df.iloc[:-horizon]
 
+            # =======================================================
+            # TRAVA DE SEGURANÇA: Compatibilidade de Janela PyTorch
+            # O val_size não pode ser inferior ao horizonte
+            # =======================================================
+            safe_val_size = info.get("val_size", horizon)
+            if safe_val_size < horizon:
+                safe_val_size = horizon
+
             # Cria um DataFrame base apenas com as datas do horizonte futuro para receber as previsões
             future_dates = df.iloc[-horizon:]["ds"].reset_index(drop=True)
             final_forecasts = pd.DataFrame({"ds": future_dates})
 
             print(f"📈 Horizonte: {horizon} | Tamanho de Entrada (Input Size): {input_size}")
+            print(f"   > Validation Size (Protegido): {safe_val_size} pontos")
 
+            # Removemos a trava 'limit_val_batches: 0.0' para o PyTorch poder validar corretamente
             pl_trainer_kwargs = {
                 "num_sanity_val_steps": 0,
                 "enable_progress_bar": True,
-                "limit_val_batches": 0.0,
             }
 
             model_definitions = {
@@ -90,8 +99,8 @@ class DLBaselinesTrainer:
                     batch_size=8,
                     encoder_hidden_size=64,
                     scaler_type="standard",
-                    early_stop_patience_steps=3,
                     accelerator="cpu",
+                    early_stop_patience_steps=3,
                     random_seed=self.config["random_seed"],
                     num_workers_loader=0,
                     **pl_trainer_kwargs,
@@ -102,8 +111,8 @@ class DLBaselinesTrainer:
                     max_steps=400,
                     batch_size=32,
                     scaler_type="standard",
-                    early_stop_patience_steps=3,
                     accelerator="cpu",
+                    early_stop_patience_steps=3,
                     random_seed=self.config["random_seed"],
                     num_workers_loader=0,
                     **pl_trainer_kwargs,
@@ -114,8 +123,8 @@ class DLBaselinesTrainer:
                     max_steps=300,
                     batch_size=8,
                     scaler_type="standard",
-                    early_stop_patience_steps=3,
                     accelerator="cpu",
+                    early_stop_patience_steps=3,
                     random_seed=self.config["random_seed"],
                     num_workers_loader=0,
                     **pl_trainer_kwargs,
@@ -128,12 +137,12 @@ class DLBaselinesTrainer:
 
                 nf = NeuralForecast(models=[model_instance], freq=info["freq"])
 
-                # Treinamento
-                nf.fit(df=train_df)
+                # Treinamento agora recebe o parâmetro val_size de forma segura
+                nf.fit(df=train_df, val_size=safe_val_size)
 
                 print(f"🔮 Prevendo os próximos {horizon} pontos com {model_name}...")
 
-                # OTIMIZAÇÃO DE PREDICAÇÃO: Passamos apenas a janela histórica
+                # OTIMIZAÇÃO DE PREDICAÇÃO: Passamos apenas a janela histórica estritamente necessária
                 context_df = train_df.tail(input_size)
                 preds = nf.predict(df=context_df).reset_index()
 

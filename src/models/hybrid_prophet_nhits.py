@@ -59,6 +59,14 @@ class HybridProphetNHITSTrainer:
             input_size = horizon * 2
             train_df = df.iloc[:-horizon]
 
+            # =======================================================
+            # TRAVA DE SEGURANÇA: Compatibilidade de Janela PyTorch
+            # O val_size não pode ser inferior ao horizonte
+            # =======================================================
+            safe_val_size = info.get("val_size", horizon)
+            if safe_val_size < horizon:
+                safe_val_size = horizon
+
             # ==========================================
             # 1. ETAPA ESTATÍSTICA (PROPHET)
             # ==========================================
@@ -77,28 +85,31 @@ class HybridProphetNHITSTrainer:
             # ==========================================
             # 2. ETAPA DEEP LEARNING (N-HiTS)
             # ==========================================
-            print("\n🧠 [Etapa 2/3] Treinando N-HiTS nos resíduos não lineares (Modo Sobrevivência CPU)...")
+            print("\n🧠 [Etapa 2/3] Treinando N-HiTS nos resíduos não lineares...")
+            print(f"   > Validation Size (Protegido): {safe_val_size} pontos")
+
             pl_trainer_kwargs = {
                 "num_sanity_val_steps": 0,
                 "enable_progress_bar": True,
-                "limit_val_batches": 0.0,  # Trava de segurança da RAM
             }
 
             nhits_model = NHITS(
                 h=horizon,
                 input_size=input_size,
-                max_steps=400,
-                batch_size=32,
+                max_steps=500,
+                batch_size=8,
                 scaler_type="standard",
                 accelerator="cpu",
-                early_stop_patience_steps=3,
+                early_stop_patience_steps=3,  # Requer validação
                 random_seed=self.config["random_seed"],
                 num_workers_loader=0,
                 **pl_trainer_kwargs,
             )
 
             nf = NeuralForecast(models=[nhits_model], freq=info["freq"])
-            nf.fit(df=res_df)
+
+            # Passando o safe_val_size de forma explícita
+            nf.fit(df=res_df, val_size=safe_val_size)
 
             # ==========================================
             # 3. COMBINAÇÃO (PREVISÃO FUTURA)
