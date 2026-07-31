@@ -3,6 +3,16 @@
 set -e
 
 # ==============================================================================
+# PREVENÇÃO DE SUSPENSÃO (Cross-Platform)
+# Verifica se o sistema suporta systemd-inhibit (Linux) antes de usá-lo.
+# No Windows/Git Bash, a variável fica vazia e não quebra a execução.
+# ==============================================================================
+INHIBIT_CMD=""
+if command -v systemd-inhibit &> /dev/null; then
+    INHIBIT_CMD="systemd-inhibit "
+fi
+
+# ==============================================================================
 # FUNÇÃO AUXILIAR: Executa um comando e cronometra seu tempo de execução
 # ==============================================================================
 run_and_time() {
@@ -42,7 +52,7 @@ while true; do
 
     # Verifica se o Poetry está acessível
     if ! command -v poetry &> /dev/null; then
-        echo "❌ ERRO: Poetry não encontrado! Execute o setup_venv.sh primeiro."
+        echo "❌ ERRO: Poetry não encontrado! Execute o bash setup_venv.sh primeiro."
         exit 1
     fi
 
@@ -81,17 +91,17 @@ while true; do
             # Marca o tempo TOTAL de início
             TOTAL_START=$(date +%s)
 
-            # Chama a função auxiliar para rodar e cronometrar cada etapa
-            run_and_time "Ingestão de Dados" "systemd-inhibit poetry run python src/ingestion/download_dataset.py"
-            run_and_time "AutoETS Baseline" "systemd-inhibit poetry run python src/models/ets_baseline.py"
-            run_and_time "Prophet Baseline" "systemd-inhibit poetry run python src/models/prophet_baseline.py"
-            run_and_time "ARIMA Baseline" "systemd-inhibit poetry run python src/models/arima_baseline.py"
-            run_and_time "N-HiTS (Treino nos Resíduos)" "systemd-inhibit poetry run python src/models/nhits_residual.py"
-            run_and_time "Combinação Híbrida (ARIMA+N-HiTS)" "systemd-inhibit poetry run python src/models/hybrid_combiner.py"
-            run_and_time "Combinação Híbrida (Prophet+N-HiTS)" "systemd-inhibit poetry run python src/models/hybrid_prophet_nhits.py"
-            run_and_time "Deep Learning Baselines" "systemd-inhibit poetry run python src/models/deep_baselines.py"
-            run_and_time "Avaliação de Métricas" "systemd-inhibit poetry run python src/metrics/evaluate_metrics.py"
-            run_and_time "Geração de Gráficos" "systemd-inhibit poetry run python src/visualization/plot_results.py"
+            # Chama a função auxiliar injetando o comando de inibição se disponível
+            run_and_time "Ingestão de Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py"
+            run_and_time "AutoETS Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py"
+            run_and_time "Prophet Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py"
+            run_and_time "ARIMA Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py"
+            run_and_time "N-HiTS (Treino nos Resíduos)" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py"
+            run_and_time "Combinação Híbrida (ARIMA+N-HiTS)" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py"
+            run_and_time "Combinação Híbrida (Prophet+N-HiTS)" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py"
+            run_and_time "Deep Learning Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py"
+            run_and_time "Avaliação de Métricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py"
+            run_and_time "Geração de Gráficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py"
 
             # Calcula o tempo TOTAL
             TOTAL_END=$(date +%s)
