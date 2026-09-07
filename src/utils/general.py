@@ -1,4 +1,17 @@
+from pathlib import Path
+
 import pandas as pd
+import yaml
+
+# Define a raiz do projeto para localizar o main_config.yaml
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+with open(BASE_DIR / "config" / "main_config.yaml", "r", encoding="utf-8") as f:
+    _config = yaml.safe_load(f)
+
+# Bases das camadas de dados, centralizadas no main_config.yaml
+RAW_DIR = _config["data_paths"]["raw"]
+BRONZE_DIR = _config["data_paths"]["bronze"]
 
 # ==============================================================================
 # 1. CONTROLE DE EXECUÇÃO
@@ -11,9 +24,11 @@ EXECUTION_LIST = ["ETTh1"]
 # ==============================================================================
 # 2. DICIONÁRIO CENTRAL DE DATASETS
 # ==============================================================================
+# "filename" é combinado com RAW_DIR/BRONZE_DIR (vindos do main_config.yaml)
+# em get_datasets() para montar "raw_path" e "path" dinamicamente.
 DATASETS_INFO = {
     "AirPassengers": {
-        "path": "data/AirPassengers.csv",
+        "filename": "AirPassengers.csv",
         "url": "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv",
         "target_column": "Passengers",
         "date_column": "Month",
@@ -25,7 +40,7 @@ DATASETS_INFO = {
         "seasonal_period": 12,
     },
     "ETTh1": {
-        "path": "data/ETTh1.csv",
+        "filename": "ETTh1.csv",
         "url": "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv",
         "target_column": "OT",
         "date_column": "date",
@@ -37,7 +52,7 @@ DATASETS_INFO = {
         "seasonal_period": 24,
     },
     "ETTh2": {
-        "path": "data/ETTh2.csv",
+        "filename": "ETTh2.csv",
         "url": "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh2.csv",
         "target_column": "OT",
         "date_column": "date",
@@ -49,7 +64,7 @@ DATASETS_INFO = {
         "seasonal_period": 24,
     },
     "ETTm1": {
-        "path": "data/ETTm1.csv",
+        "filename": "ETTm1.csv",
         "url": "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTm1.csv",
         "target_column": "OT",
         "date_column": "date",
@@ -61,7 +76,7 @@ DATASETS_INFO = {
         "seasonal_period": 96,
     },
     "ECL": {
-        "path": "data/ECL.csv",
+        "filename": "ECL.csv",
         "url": "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/electricity.csv",
         "target_column": "OT",
         "date_column": "date",
@@ -73,7 +88,7 @@ DATASETS_INFO = {
         "seasonal_period": 24,
     },
     "Weather": {
-        "path": "data/Weather.csv",
+        "filename": "Weather.csv",
         "url": "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/weather.csv",
         "target_column": "OT",
         "date_column": "date",
@@ -90,19 +105,28 @@ DATASETS_INFO = {
 # ==============================================================================
 # 3. FUNÇÕES UTILITÁRIAS
 # ==============================================================================
+def _with_computed_paths(info):
+    """Combina RAW_DIR/BRONZE_DIR (main_config.yaml) com o filename do dataset."""
+    enriched = dict(info)
+    enriched["raw_path"] = f"{RAW_DIR}{info['filename']}"
+    enriched["path"] = f"{BRONZE_DIR}{info['filename']}"
+    return enriched
+
+
 def get_datasets():
     """
-    Retorna os dicionários correspondentes aos datasets definidos na EXECUTION_LIST.
+    Retorna os dicionários correspondentes aos datasets definidos na EXECUTION_LIST,
+    já com "raw_path" e "path" calculados a partir do main_config.yaml.
     """
     # Se "ALL" estiver na lista (ignorando maiúsculas/minúsculas), retorna todos
     if "ALL" in [ds.upper() for ds in EXECUTION_LIST]:
-        return DATASETS_INFO
+        return {name: _with_computed_paths(info) for name, info in DATASETS_INFO.items()}
 
     selected_datasets = {}
 
     for ds in EXECUTION_LIST:
         if ds in DATASETS_INFO:
-            selected_datasets[ds] = DATASETS_INFO[ds]
+            selected_datasets[ds] = _with_computed_paths(DATASETS_INFO[ds])
         else:
             print(f"⚠️ Aviso: Dataset '{ds}' não configurado em DATASETS_INFO. Ignorando...")
 

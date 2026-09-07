@@ -8,55 +8,70 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
-# Importando o novo controlador de execução
+# Importando o novo controlador de execução (já lê data_paths do main_config.yaml)
+from src.utils.general import BRONZE_DIR as _BRONZE_DIR
+from src.utils.general import RAW_DIR as _RAW_DIR
 from src.utils.general import get_datasets
 
-# Garante que a pasta data/ exista
-DATA_DIR = BASE_DIR / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Garante que as pastas data/raw/ e data/bronze/ existam (mesma fonte que general.py usa)
+RAW_DIR = BASE_DIR / _RAW_DIR
+BRONZE_DIR = BASE_DIR / _BRONZE_DIR
+RAW_DIR.mkdir(parents=True, exist_ok=True)
+BRONZE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def baixar_dataset(dataset_name, info):
     print(f"\n📥 Iniciando ingestão para: {dataset_name}")
 
-    url = info.get("url")
-    if not url:
-        print(f"⚠️ Nenhuma URL configurada para {dataset_name}. Pulando...")
+    raw_path = BASE_DIR / info["raw_path"]
+    bronze_path = BASE_DIR / info["path"]
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    bronze_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if bronze_path.exists():
+        print(f"✅ O arquivo {dataset_name} já existe em {bronze_path.parent.name}/ (bronze). Pulando.")
         return
 
-    # Utiliza a chave "path" definida no general.py
-    arquivo_destino = BASE_DIR / info["path"]
+    # 1. RAW: baixa o arquivo exatamente como veio da fonte, sem tratar nada
+    if raw_path.exists():
+        print(f"♻️  Raw de {dataset_name} já existe em {raw_path.parent.name}/. Reaproveitando (sem novo download).")
+    else:
+        url = info.get("url")
+        if not url:
+            print(f"⚠️ Nenhuma URL configurada para {dataset_name}. Pulando...")
+            return
 
-    if arquivo_destino.exists():
-        print(f"✅ O arquivo {dataset_name}.csv já existe na pasta {arquivo_destino.parent.name}/. Pulando download.")
-        return
+        print(f"⏳ Baixando {dataset_name} a partir da URL...")
+        try:
+            # Usa um header de navegador para evitar bloqueios de bots
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req) as response:
+                conteudo = response.read()
 
-    print(f"⏳ Baixando {dataset_name} a partir da URL...")
+            with open(raw_path, "wb") as f:
+                f.write(conteudo)
+
+            print(f"✅ Download concluído (raw): {info['raw_path']}")
+        except Exception as e:
+            print(f"❌ Erro ao baixar {dataset_name}: {e}")
+            return
+
+    # 2. BRONZE: filtra as colunas essenciais a partir do raw
+    print(f"🧹 Filtrando colunas essenciais para o dataset {dataset_name}...")
     try:
-        # Usa um header de navegador para evitar bloqueios de bots
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req) as response:
-            conteudo = response.read()
-
-        with open(arquivo_destino, "wb") as f:
-            f.write(conteudo)
-
-        print(f"✅ Download concluído: {info['path']}")
-
-        # Filtragem de colunas
-        print(f"🧹 Filtrando colunas essenciais para o dataset {dataset_name}...")
-        df = pd.read_csv(arquivo_destino)
+        df = pd.read_csv(raw_path)
         colunas_necessarias = [info["date_column"], info["target_column"]]
 
         if all(col in df.columns for col in colunas_necessarias):
             df = df[colunas_necessarias]
-            df.to_csv(arquivo_destino, index=False)
-            print(f"✅ {dataset_name} limpo e salvo com as colunas: {colunas_necessarias}.")
+            df.to_csv(bronze_path, index=False)
+            print(f"✅ {dataset_name} limpo e salvo em {info['path']} com as colunas: {colunas_necessarias}.")
         else:
-            print(f"⚠️ Aviso: As colunas {colunas_necessarias} não foram encontradas. Arquivo salvo sem alterações.")
-
+            print(f"⚠️ Aviso: As colunas {colunas_necessarias} não foram encontradas em {dataset_name}.")
+            print(f"   Salvando cópia integral do raw em {info['path']} (sem filtragem).")
+            df.to_csv(bronze_path, index=False)
     except Exception as e:
-        print(f"❌ Erro ao baixar ou processar {dataset_name}: {e}")
+        print(f"❌ Erro ao processar (raw -> bronze) {dataset_name}: {e}")
 
 
 if __name__ == "__main__":
