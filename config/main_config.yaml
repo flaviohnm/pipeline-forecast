@@ -1,6 +1,11 @@
 # config/main_config.yaml
 project_name: "Time Series Forecasting Pipeline"
 
+# Camadas de Dados (Medallion Architecture)
+data_paths:
+  raw: "data/raw/"
+  bronze: "data/bronze/"
+
 # Mapeamento de Pastas (Rastreabilidade MLOps)
 results_paths:
   forecasts: "results/forecasts/"
