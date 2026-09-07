@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 # ==============================================================================
 # PREVENÇÃO DE SUSPENSÃO (Cross-Platform)
 # Verifica se o sistema suporta systemd-inhibit (Linux) antes de usá-lo.
@@ -13,54 +11,172 @@ if command -v systemd-inhibit &> /dev/null; then
 fi
 
 # ==============================================================================
-# FUNÇÃO AUXILIAR: Executa um comando e cronometra seu tempo de execução
+# LOGGING E RASTREABILIDADE
+# Cada execução gera um log completo em disco (logs/) e uma linha em
+# results/execution_times.csv com timestamp, duração, status e commit do git.
+# Isso é essencial para reportar custo computacional na dissertação e para
+# não perder o output se a sessão SSH cair.
+# ==============================================================================
+LOG_DIR="logs"
+RESULTS_DIR="results"
+TIMES_CSV="${RESULTS_DIR}/execution_times.csv"
+mkdir -p "$LOG_DIR" "$RESULTS_DIR"
+
+if [ ! -f "$TIMES_CSV" ]; then
+    echo "timestamp,step,duration_seconds,status,git_commit" > "$TIMES_CSV"
+fi
+
+get_git_commit() {
+    git rev-parse --short HEAD 2>/dev/null || echo "N/A"
+}
+
+# ==============================================================================
+# FUNÇÃO AUXILIAR: Executa um comando, cronometra, loga em arquivo e registra
+# o resultado no CSV. Retorna o status de saída do comando (em vez de matar
+# o script inteiro), para que o menu continue disponível após uma falha.
 # ==============================================================================
 run_and_time() {
     local step_name=$1
     local cmd=$2
-    
+    local slug
+    slug=$(echo "$step_name" | tr ' /()' '_' | tr -cd '[:alnum:]_-')
+    local log_file="${LOG_DIR}/${slug}_$(date +%Y%m%d_%H%M%S).log"
+
     echo "======================================================="
     echo "⏳ Iniciando: $step_name"
+    echo "📝 Log completo em: $log_file"
     echo "======================================================="
-    
+
     local start_time=$(date +%s)
-    
-    # Executa o comando passado para a função
-    eval $cmd
-    
+
+    # Executa o comando, mostra a saída na tela E salva em arquivo
+    eval "$cmd" 2>&1 | tee "$log_file"
+    local status=${PIPESTATUS[0]}
+
     local end_time=$(date +%s)
     local elapsed=$((end_time - start_time))
     local h=$((elapsed / 3600))
     local m=$(((elapsed % 3600) / 60))
     local s=$((elapsed % 60))
-    
-    echo "-------------------------------------------------------"
-    echo "⏱️  TEMPO GASTO EM [$step_name]: ${h}h ${m}m ${s}s"
-    echo "-------------------------------------------------------"
+
+    if [ "$status" -eq 0 ]; then
+        echo "-------------------------------------------------------"
+        echo "⏱️  TEMPO GASTO EM [$step_name]: ${h}h ${m}m ${s}s"
+        echo "-------------------------------------------------------"
+    else
+        echo "-------------------------------------------------------"
+        echo "❌ [$step_name] FALHOU (código $status) após ${h}h ${m}m ${s}s"
+        echo "   Veja o log completo em: $log_file"
+        echo "-------------------------------------------------------"
+    fi
     echo ""
+
+    echo "$(date '+%Y-%m-%d %H:%M:%S'),${step_name},${elapsed},${status},$(get_git_commit)" >> "$TIMES_CSV"
+
+    return $status
 }
 
-# Loop infinito para manter o menu ativo
+# ==============================================================================
+# PIPELINE COMPLETO
+# Isolado em função para poder abortar cedo (sem `exit`) se uma etapa falhar,
+# preservando o menu interativo e o restante da run_experiment.sh.
+# ==============================================================================
+run_full_pipeline() {
+    echo "🚀 Iniciando Execução Completa (conforme configurado em general.py)..."
+    echo "🔖 Commit atual: $(get_git_commit)"
+    local TOTAL_START=$(date +%s)
+
+    run_and_time "Ingestao_de_Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py" || return 1
+    run_and_time "AutoETS_Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py" || return 1
+    run_and_time "Prophet_Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py" || return 1
+    run_and_time "ARIMA_Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py" || return 1
+    run_and_time "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" || return 1
+    run_and_time "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" || return 1
+    run_and_time "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py" || return 1
+    run_and_time "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py" || return 1
+    run_and_time "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py" || return 1
+    run_and_time "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" || return 1
+
+    local TOTAL_END=$(date +%s)
+    local TOTAL_ELAPSED=$((TOTAL_END - TOTAL_START))
+    local TOTAL_H=$((TOTAL_ELAPSED / 3600))
+    local TOTAL_M=$(((TOTAL_ELAPSED % 3600) / 60))
+    local TOTAL_S=$((TOTAL_ELAPSED % 60))
+
+    echo "======================================================="
+    echo "🎉 Experimento Completo Finalizado com Sucesso!"
+    echo "⏱️  TEMPO TOTAL DE EXECUÇÃO: ${TOTAL_H}h ${TOTAL_M}m ${TOTAL_S}s"
+    echo "📂 Resultados disponíveis na pasta results/"
+    echo "📊 Tempos por etapa: ${TIMES_CSV}"
+    echo "======================================================="
+}
+
+# ==============================================================================
+# EXECUTA UMA OPÇÃO DO MENU (usado tanto pelo modo interativo quanto pelo
+# modo não-interativo/CLI)
+# ==============================================================================
+executar_opcao() {
+    local OPCAO=$1
+    case $OPCAO in
+        0) run_and_time "Ingestao_de_Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py" ;;
+        1) run_full_pipeline ;;
+        2) run_and_time "ARIMA_Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py" ;;
+        3) run_and_time "AutoETS_Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py" ;;
+        4) run_and_time "Prophet_Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py" ;;
+        5) run_and_time "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" ;;
+        6) run_and_time "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" ;;
+        7) run_and_time "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py" ;;
+        8) run_and_time "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py" ;;
+        9) run_and_time "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py" ;;
+        10) run_and_time "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" ;;
+        *)
+            echo "❌ Opção inválida."
+            return 1
+            ;;
+    esac
+}
+
+export TF_ENABLE_ONEDNN_OPTS=0
+
+# ==============================================================================
+# FORÇA UTF-8 NO PYTHON
+# Quando a saída do Python deixa de ir direto pro terminal e passa a ser
+# redirecionada (como agora, pro `tee`), o Windows volta a usar o encoding
+# padrão do console (cp1252), que quebra em prints com emoji/acentuação.
+# Isso força UTF-8 sempre, terminal ou pipe, Windows ou Linux.
+# ==============================================================================
+export PYTHONIOENCODING="utf-8"
+export PYTHONUTF8=1
+
+# Verifica se o Poetry está acessível (checagem única, fora do loop)
+if ! command -v poetry &> /dev/null; then
+    echo "❌ ERRO: Poetry não encontrado! Execute o bash setup_venv.sh primeiro."
+    exit 1
+fi
+
+# ==============================================================================
+# MODO NÃO-INTERATIVO: `bash run_experiment.sh <opcao>`
+# Essencial para rodar em background/servidor remoto sem precisar ficar
+# respondendo ao menu, ex.: nohup bash run_experiment.sh 1 > full_run.log 2>&1 &
+# ou dentro de um `tmux`/`screen` que você pode desconectar com segurança.
+# ==============================================================================
+if [ -n "$1" ]; then
+    executar_opcao "$1"
+    exit $?
+fi
+
+# ==============================================================================
+# MODO INTERATIVO: menu em loop (comportamento original)
+# ==============================================================================
 while true; do
-    # --- 1. Configuração do Ambiente ---
     clear
     echo "======================================================="
     echo "   🚀  Time Series Forecasting - Orquestrador Híbrido"
     echo "======================================================="
-
-    export TF_ENABLE_ONEDNN_OPTS=0
-
-    # Verifica se o Poetry está acessível
-    if ! command -v poetry &> /dev/null; then
-        echo "❌ ERRO: Poetry não encontrado! Execute o bash setup_venv.sh primeiro."
-        exit 1
-    fi
-
     echo "✅ Ambiente gerenciado pelo Poetry."
     echo "🎯 CONTROLE DE DATASETS: Gerenciado pelo arquivo src/utils/general.py"
+    echo "🔖 Commit atual: $(get_git_commit)"
     echo ""
-
-    # --- 2. Menu Interativo ---
     echo "Escolha a etapa do experimento que deseja executar:"
     echo ""
     echo "  [0]  📥 Passo 0: Baixar Datasets (Ingestão)"
@@ -81,60 +197,15 @@ while true; do
     echo "  [S/s] Sair do Orquestrador"
     echo ""
     read -p "Opção: " OPCAO
-
     echo ""
-    case $OPCAO in
-        0) poetry run python src/ingestion/download_dataset.py ;;
-        1)
-            echo "🚀 Iniciando Execução Completa (conforme configurado em general.py)..."
-            
-            # Marca o tempo TOTAL de início
-            TOTAL_START=$(date +%s)
 
-            # Chama a função auxiliar injetando o comando de inibição se disponível
-            run_and_time "Ingestão de Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py"
-            run_and_time "AutoETS Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py"
-            run_and_time "Prophet Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py"
-            run_and_time "ARIMA Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py"
-            run_and_time "N-HiTS (Treino nos Resíduos)" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py"
-            run_and_time "Combinação Híbrida (ARIMA+N-HiTS)" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py"
-            run_and_time "Combinação Híbrida (Prophet+N-HiTS)" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py"
-            run_and_time "Deep Learning Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py"
-            run_and_time "Avaliação de Métricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py"
-            run_and_time "Geração de Gráficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py"
+    if [[ "$OPCAO" == "S" || "$OPCAO" == "s" ]]; then
+        echo "👋 Encerrando orquestrador. Até a próxima!"
+        exit 0
+    fi
 
-            # Calcula o tempo TOTAL
-            TOTAL_END=$(date +%s)
-            TOTAL_ELAPSED=$((TOTAL_END - TOTAL_START))
-            TOTAL_H=$((TOTAL_ELAPSED / 3600))
-            TOTAL_M=$(((TOTAL_ELAPSED % 3600) / 60))
-            TOTAL_S=$((TOTAL_ELAPSED % 60))
+    executar_opcao "$OPCAO"
 
-            echo "======================================================="
-            echo "🎉 Experimento Completo Finalizado com Sucesso!"
-            echo "⏱️  TEMPO TOTAL DE EXECUÇÃO: ${TOTAL_H}h ${TOTAL_M}m ${TOTAL_S}s"
-            echo "📂 Resultados disponíveis na pasta results/"
-            echo "======================================================="
-            ;;
-        2) poetry run python src/models/arima_baseline.py ;;
-        3) poetry run python src/models/ets_baseline.py ;;
-        4) poetry run python src/models/prophet_baseline.py ;;
-        5) poetry run python src/models/nhits_residual.py ;;
-        6) poetry run python src/models/hybrid_combiner.py ;;
-        7) poetry run python src/models/hybrid_prophet_nhits.py ;;
-        8) poetry run python src/models/deep_baselines.py ;;
-        9) poetry run python src/metrics/evaluate_metrics.py ;;
-        10) poetry run python src/visualization/plot_results.py ;;
-        S|s) 
-            echo "👋 Encerrando orquestrador. Até a próxima!"
-            exit 0 
-            ;;
-        *) 
-            echo "❌ Opção inválida." 
-            ;;
-    esac
-
-    # Pausa para o usuário ler a saída do terminal antes de limpar a tela novamente
     echo ""
     read -p "Pressione [ENTER] para voltar ao menu..."
 done
