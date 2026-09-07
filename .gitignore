@@ -1,5 +1,6 @@
 # --- 1. DADOS E RESULTADOS (Deep Learning / TSF) ---
 data/
+logs/
 results/
 lightning_logs/
 # Ignora possíveis notebooks de rascunho que você não quer versionar
@@ -14,17 +15,28 @@ lightning_logs/
 # --- 3. CACHE E COMPILADOS DO PYTHON ---
 __pycache__/
 *.py[cod]
-*$py.classs
+*$py.class
 *.so
-__init__.py
+build/
+dist/
+*.egg-info/
+.eggs/
 
 # --- 4. FERRAMENTAS DE DATA SCIENCE (Jupyter/IPython) ---
 .ipynb_checkpoints/
 profile_default/
 ipython_config.py
 
+# --- 5. TESTES E QUALIDADE DE CÓDIGO ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # --- 6. IDEs E SISTEMA OPERACIONAL ---
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db
+Desktop.ini
