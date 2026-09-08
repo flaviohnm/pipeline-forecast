@@ -39,6 +39,7 @@ Para garantir a reprodutibilidade dos experimentos, recomenda-se:
 - Sistema Operacional
   - Linux (Ubuntu/Fedora)
   - macOS
+  - Windows (via Git Bash / pyenv-win)
 
 - Python
   - **3.11.9** ou superior
@@ -73,21 +74,27 @@ O script realiza automaticamente:
 
 # ⚙️ Configuração
 
-Toda a configuração do experimento é feita através do arquivo `.env`.
+A seleção de datasets é feita através da lista `EXECUTION_LIST`, em `src/utils/general.py`.
 
 Exemplo:
 
-```env
-# Opções:
-# ETTh1
-# ETTh2
-# ETTm1
-# ECL
-# Weather
-# AirPassengers
-# ALL
+```python
+# Opções individuais: "AirPassengers", "ETTh1", "ETTh2", "ETTm1", "ECL", "Weather"
+# Para rodar todos de uma vez: ["ALL"]
+EXECUTION_LIST = ["ETTh1"]
+```
 
-DATASET=Weather
+Os caminhos usados pelo pipeline (dados e resultados) ficam centralizados em `config/main_config.yaml`:
+
+```yaml
+data_paths:
+  raw: "data/raw/"      # datasets exatamente como baixados da fonte
+  bronze: "data/bronze/"  # datasets já filtrados (date_column + target_column)
+
+results_paths:
+  forecasts: "results/forecasts/"
+  metrics: "results/metrics/"
+  # ...
 ```
 
 ---
@@ -108,7 +115,8 @@ Será exibido o seguinte menu:
 =======================================================
 
 ✅ Ambiente gerenciado pelo Poetry.
-🎯 DATASET ATIVO (Lido do .env): Weather
+🎯 CONTROLE DE DATASETS: Gerenciado pelo arquivo src/utils/general.py
+🔖 Commit atual: a1b2c3d
 
 Escolha a etapa do experimento:
 
@@ -138,6 +146,19 @@ Escolha a etapa do experimento:
 [S] Sair
 ```
 
+## Execução não-interativa (background / servidor remoto)
+
+Para rodar uma etapa direto, sem menu — útil junto com `nohup`, `tmux` ou `screen` em treinos longos:
+
+```bash
+bash run_experiment.sh 1   # roda o pipeline completo e sai, sem esperar ENTER
+```
+
+Cada execução gera automaticamente:
+
+- Um log completo por etapa em `logs/`
+- Uma linha em `results/execution_times.csv` com timestamp, duração, status e commit do git — útil para reportar custo computacional na dissertação
+
 ---
 
 # 📂 Estrutura do Projeto
@@ -149,7 +170,13 @@ pipeline-forecast/
 │   └── main_config.yaml
 │
 ├── data/
-│   └── Datasets baixados
+│   ├── raw/
+│   │   └── Datasets exatamente como baixados da fonte
+│   └── bronze/
+│       └── Datasets filtrados (date_column + target_column)
+│
+├── logs/
+│   └── Log completo de cada etapa executada pelo orquestrador
 │
 ├── results/
 │   ├── forecasts/
@@ -162,7 +189,8 @@ pipeline-forecast/
 │   │
 │   ├── metrics/
 │   ├── plots/
-│   └── residuals/
+│   ├── residuals/
+│   └── execution_times.csv
 │
 ├── src/
 │   ├── ingestion/
@@ -185,12 +213,15 @@ pipeline-forecast/
 | Diretório | Descrição |
 |------------|-----------|
 | `config/` | Configurações centrais do experimento |
-| `data/` | Datasets utilizados |
+| `data/raw/` | Datasets exatamente como baixados da fonte, sem tratamento |
+| `data/bronze/` | Datasets filtrados para `date_column` + `target_column`, prontos para uso |
+| `logs/` | Log completo (stdout/stderr) de cada etapa executada pelo orquestrador |
 | `results/` | Resultados gerados pelo pipeline |
 | `results/forecasts/` | Previsões produzidas por cada modelo |
 | `results/metrics/` | Métricas consolidadas |
 | `results/plots/` | Gráficos produzidos |
 | `results/residuals/` | Resíduos utilizados pelos modelos híbridos |
+| `results/execution_times.csv` | Tempo, status e commit do git de cada etapa executada |
 | `src/` | Código-fonte do projeto |
 
 ---
@@ -201,7 +232,7 @@ pipeline-forecast/
 Datasets
      │
      ▼
-Ingestão
+Ingestão (raw → bronze)
      │
      ▼
 Modelagem Estatística
