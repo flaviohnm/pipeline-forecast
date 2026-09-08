@@ -49,6 +49,40 @@ poetry config virtualenvs.in-project true
 echo "📦 Instalando/Sincronizando dependências do pyproject.toml..."
 poetry install --no-root
 
+# 5. Verifica se o backend do Prophet (CmdStan) está funcional.
+# É comum o CmdStan não compilar corretamente durante o `poetry install`
+# (principalmente no Windows, por faltar um compilador C++ compatível).
+# Se detectarmos isso agora, corrigimos aqui em vez de deixar para quebrar
+# só quando o Passo 4 (Prophet Baseline) do orquestrador for executado.
+echo "----------------------------------------------------------------------"
+echo "🔬 Verificando se o backend do Prophet (CmdStan) está funcional..."
+set +e
+poetry run python -c "from prophet import Prophet; Prophet()" > /dev/null 2>&1
+PROPHET_OK=$?
+set -e
+
+if [ "$PROPHET_OK" -ne 0 ]; then
+    echo "⚠️ Backend do Prophet não está funcional. Instalando toolchain C++ e CmdStan..."
+    echo "   (isso pode levar alguns minutos e precisa de internet)"
+
+    set +e
+    poetry run python -m cmdstanpy.install_cxx_toolchain
+    poetry run python -c "import cmdstanpy; cmdstanpy.install_cmdstan(overwrite=True)"
+    poetry run python -c "from prophet import Prophet; Prophet()" > /dev/null 2>&1
+    PROPHET_OK=$?
+    set -e
+
+    if [ "$PROPHET_OK" -eq 0 ]; then
+        echo "✅ Backend do Prophet corrigido com sucesso!"
+    else
+        echo "❌ Não foi possível corrigir o backend do Prophet automaticamente."
+        echo "   No Windows, feche e reabra o terminal (PATH do compilador só é"
+        echo "   aplicado numa sessão nova) e rode este script de novo."
+    fi
+else
+    echo "✅ Backend do Prophet OK."
+fi
+
 echo "----------------------------------------------------------------------"
 echo "✅ Ambiente virtual criado e dependências instaladas com sucesso!"
 echo ""
