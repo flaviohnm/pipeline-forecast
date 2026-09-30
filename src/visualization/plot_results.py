@@ -17,6 +17,7 @@ class ResultsPlotter:
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
+        self.raw_dir = BASE_DIR / self.config["data_paths"]["raw"]
         self.metrics_dir = BASE_DIR / self.config["results_paths"]["metrics"]
         self.plots_dir = BASE_DIR / self.config["results_paths"]["plots"]
         self.forecast_hybrid = BASE_DIR / self.config["results_paths"]["forecasts"] / "hybrid"
@@ -57,8 +58,11 @@ class ResultsPlotter:
         print(f"   📈 Gerando gráfico de linhas da previsão para {dataset_name}...")
 
         preds_file = self.forecast_hybrid / f"{dataset_name}_hybrid_predictions.csv"
-        info = self.config["datasets"][dataset_name]
-        raw_file = BASE_DIR / info["path"]
+        # Convenção dos datasets ETT (ETTh1, ETTh2, ETTm1, ETTm2): coluna de data
+        # sempre "date" e alvo sempre "OT". Caminho montado a partir de data_paths.raw.
+        raw_file = self.raw_dir / f"{dataset_name}.csv"
+        date_column = "date"
+        target_column = "OT"
 
         if not preds_file.exists() or not raw_file.exists():
             print("   ⚠️ Arquivos de previsão ou dados reais não encontrados.")
@@ -69,7 +73,7 @@ class ResultsPlotter:
         df_preds["ds"] = pd.to_datetime(df_preds["ds"])
 
         df_raw = pd.read_csv(raw_file)
-        df_raw = df_raw[[info["date_column"], info["target_column"]]].copy()
+        df_raw = df_raw[[date_column, target_column]].copy()
         df_raw.columns = ["ds", "Real"]
         df_raw["ds"] = pd.to_datetime(df_raw["ds"])
 
@@ -116,22 +120,23 @@ class ResultsPlotter:
 
     def run(self):
         print("\n🎨 [PASSO 5] Gerando Visualizações para o Artigo Científico")
-        
+
         # Puxa a variável de ambiente (ou ETTh1 por padrão se estiver vazio)
         target_dataset = os.getenv("DATASET", "ETTh1").strip()
 
         if target_dataset.upper() == "ALL":
             print("🚀 Modo BATCH detectado: Filtrando datasets com dados PRONTOS para plotagem...")
             datasets_to_run = []
-            
+
             # Só adiciona na fila se os arquivos já existirem nas pastas
-            for ds in self.config["datasets"].keys():
+            for raw_csv in self.raw_dir.glob("*.csv"):
+                ds = raw_csv.stem
                 metrics_ok = (self.metrics_dir / f"{ds}_evaluation_complete.csv").exists()
                 hybrid_ok = (self.forecast_hybrid / f"{ds}_hybrid_predictions.csv").exists()
-                
+
                 if metrics_ok and hybrid_ok:
                     datasets_to_run.append(ds)
-            
+
             if not datasets_to_run:
                 print("   ⚠️ Nenhum dataset possui arquivos de métricas e previsões gerados ainda.")
                 return
@@ -147,7 +152,7 @@ class ResultsPlotter:
                 self.plot_time_series_forecast(ds_name)
             except Exception as e:
                 print(f"   ❌ Erro ao gerar gráficos para {ds_name}: {e}")
-                
+
         print("-" * 60 + "\n")
 
 
