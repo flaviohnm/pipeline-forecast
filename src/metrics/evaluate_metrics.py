@@ -344,7 +344,12 @@ class MetricsMultiHorizon:
             # Só as colunas de modelo ainda não carregadas (ex.: o arquivo do híbrido também traz o ARIMA)
             keep = [c for c in df_m.columns if c in model_cols and c not in df_preds.columns]
             df_preds = pd.merge(df_preds, df_m[["cutoff", "ds"] + keep], on=["cutoff", "ds"], how="left")
-            print(f"   > Carregado: {rolling_file.name} ({', '.join(keep) or 'nenhuma coluna nova'})")
+            # Data do arquivo ajuda a notar previsões antigas (ex.: etapa que falhou nesta execução)
+            modified = pd.Timestamp(rolling_file.stat().st_mtime, unit="s", tz="UTC").tz_convert(None)
+            print(
+                f"   > Carregado: {rolling_file.name} ({', '.join(keep) or 'nenhuma coluna nova'}) "
+                f"| gerado em {modified:%Y-%m-%d %H:%M} UTC"
+            )
 
         # 3. Gabarito
         df_eval = pd.merge(df_preds, df_raw, on="ds", how="inner")

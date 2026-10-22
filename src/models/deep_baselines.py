@@ -29,12 +29,19 @@ def fit_predict_rolling(model_name, model_instance, df, info, input_size):
     if origins[0] < input_size:
         raise ValueError(f"Histórico antes da 1ª origem ({origins[0]}) menor que o input_size ({input_size}).")
 
+    # Valores ausentes são aceitos só depois do último cutoff (ex.: resíduos), nunca no treino ou contexto
+    df_fit = df.iloc[: origins[0]]
+    if df_fit["y"].isna().any():
+        raise ValueError("Valores ausentes no bloco treino+val usado para treinar o modelo.")
+
     nf = NeuralForecast(models=[model_instance], freq=info["freq"])
-    nf.fit(df=df.iloc[: origins[0]], val_size=info["rolling"]["val_size"])
+    nf.fit(df=df_fit, val_size=info["rolling"]["val_size"])
 
     frames = []
     for start in origins:
         context_df = df.iloc[start - input_size : start]
+        if context_df["y"].isna().any():
+            raise ValueError(f"Valores ausentes no contexto da janela com cutoff {context_df['ds'].iloc[-1]}.")
         preds = nf.predict(df=context_df).reset_index()
         preds["cutoff"] = context_df["ds"].iloc[-1]
         frames.append(preds[["unique_id", "cutoff", "ds", model_name]])
