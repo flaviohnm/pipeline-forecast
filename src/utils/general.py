@@ -52,6 +52,9 @@ DATASETS_INFO = {
         "train_size": 8640,
         "val_size": 720,
         "seasonal_period": 24,
+        # Protocolo rolling (evaluation.protocol): blocos treino/val/teste de 12/4/4 meses,
+        # origens a cada 1 semana dentro do bloco de teste
+        "rolling": {"val_size": 2880, "test_size": 2880, "step_size": 168},
     },
     "ETTh2": {
         "filename": "ETTh2.csv",
@@ -66,6 +69,9 @@ DATASETS_INFO = {
         "train_size": 8640,
         "val_size": 720,
         "seasonal_period": 24,
+        # Protocolo rolling (evaluation.protocol): blocos treino/val/teste de 12/4/4 meses,
+        # origens a cada 1 semana dentro do bloco de teste
+        "rolling": {"val_size": 2880, "test_size": 2880, "step_size": 168},
     },
     "ETTm1": {
         "filename": "ETTm1.csv",
@@ -80,6 +86,8 @@ DATASETS_INFO = {
         "train_size": 34560,
         "val_size": 720,
         "seasonal_period": 96,
+        # Protocolo rolling: 12/4/4 meses em passos de 15 min, origens a cada 1 semana
+        "rolling": {"val_size": 11520, "test_size": 11520, "step_size": 672},
     },
     "ECL": {
         "filename": "ECL.csv",
@@ -137,6 +145,30 @@ def get_datasets():
             print(f"⚠️ Aviso: Dataset '{ds}' não configurado em DATASETS_INFO. Ignorando...")
 
     return selected_datasets
+
+
+def get_rolling_origins(info, n_rows):
+    """
+    Posições (na série em ordem temporal) do primeiro passo previsto em cada janela do protocolo rolling.
+
+    Blocos: treino [0, train_size) | validação [train_size, +val_size) | teste [+val_size, +test_size).
+    Cada janela prevê max_horizon passos e precisa caber inteira no bloco de teste; as origens
+    avançam step_size passos. O modelo usa dados até a posição (origem - 1), chamada de "cutoff".
+    """
+    rolling = info.get("rolling")
+    if not rolling or not info.get("train_size"):
+        raise ValueError("Protocolo rolling exige 'train_size' e 'rolling' configurados para o dataset.")
+
+    max_h = info["max_horizon"]
+    test_start = info["train_size"] + rolling["val_size"]
+    test_end = test_start + rolling["test_size"]
+
+    if rolling["test_size"] < max_h:
+        raise ValueError(f"Bloco de teste ({rolling['test_size']}) menor que o horizonte máximo ({max_h}).")
+    if test_end > n_rows:
+        raise ValueError(f"Blocos treino+val+teste ({test_end}) excedem o tamanho da série ({n_rows}).")
+
+    return list(range(test_start, test_end - max_h + 1, rolling["step_size"]))
 
 
 def prepare_data(df, info, name):

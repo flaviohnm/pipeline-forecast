@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
-from src.utils.general import get_datasets
+from src.utils.general import get_datasets, get_rolling_origins
 
 warnings.filterwarnings("ignore")
 
@@ -134,6 +134,63 @@ def slice_horizon(df_eval, h):
     return df_h
 
 
+def calculate_metrics(y_true, y_pred, scaler_mean, scaler_std):
+    # Aplica a Padronização Z-Score (Escala Acadêmica) antes de calcular o erro
+    y_true_scaled = (y_true - scaler_mean) / scaler_std
+    y_pred_scaled = (y_pred - scaler_mean) / scaler_std
+
+    mse = np.mean((y_true_scaled - y_pred_scaled) ** 2)
+    mae = np.mean(np.abs(y_true_scaled - y_pred_scaled))
+    return mse, mae
+
+
+# ==============================================================================
+# PROTOCOLO ROLLING (várias origens no bloco de teste)
+# ==============================================================================
+PROTOCOL_OPTIONS = ("single_split", "rolling")
+
+# Pasta (chave em results_paths) -> sufixo do arquivo {dataset}_{sufixo}_rolling.csv.
+# Formato longo esperado: cutoff, ds, <colunas de MODEL_COLUMNS> (unique_id e y são ignorados).
+ROLLING_SOURCES = {
+    "arima": "arima",
+    "ets": "ets",
+    "prophet": "prophet",
+    "deep_learning": "deep",
+    "hybrid": "hybrid",
+    "hybrid_prophet": "hybrid_prophet",
+}
+
+
+def evaluate_rolling(df_eval, horizons, model_columns, norm_mean, norm_std):
+    """
+    Métricas por janela (cutoff) e horizonte, e o resumo média ± desvio entre janelas.
+    Um modelo sem previsão completa numa janela fica de fora só daquela janela (ver n_janelas).
+    """
+    rows = []
+    for cutoff, df_w in df_eval.sort_values(["cutoff", "ds"]).groupby("cutoff", sort=True):
+        for h in horizons:
+            df_h = slice_horizon(df_w, h)
+            for model_name, col_name in model_columns.items():
+                if col_name not in df_h.columns or df_h[col_name].isna().any():
+                    continue
+                mse, mae = calculate_metrics(df_h["y_real"], df_h[col_name], norm_mean, norm_std)
+                rows.append({"cutoff": cutoff, "Horizonte": h, "Modelo": model_name, "MSE": mse, "MAE": mae})
+
+    df_windows = pd.DataFrame(rows, columns=["cutoff", "Horizonte", "Modelo", "MSE", "MAE"])
+    df_summary = (
+        df_windows.groupby(["Horizonte", "Modelo"], sort=False)
+        .agg(
+            MSE_mean=("MSE", "mean"),
+            MSE_std=("MSE", "std"),
+            MAE_mean=("MAE", "mean"),
+            MAE_std=("MAE", "std"),
+            n_janelas=("MSE", "size"),
+        )
+        .reset_index()
+    )
+    return df_windows, df_summary
+
+
 class MetricsMultiHorizon:
     def __init__(self, config_path="config/main_config.yaml"):
         # Mantemos o YAML para mapear onde os resultados de cada modelo estão salvos
@@ -146,16 +203,23 @@ class MetricsMultiHorizon:
         self.metrics_dir = BASE_DIR / self.config["results_paths"]["metrics"]
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
 
-        self.norm_stats = self.config.get("evaluation", {}).get("norm_stats", "global")
+        eval_config = self.config.get("evaluation", {})
+        self.norm_stats = eval_config.get("norm_stats", "global")
+        self.protocol = eval_config.get("protocol", "single_split")
+        if self.protocol not in PROTOCOL_OPTIONS:
+            raise ValueError(f"evaluation.protocol inválido: '{self.protocol}'. Use um de {PROTOCOL_OPTIONS}.")
 
     def calculate_metrics(self, y_true, y_pred, scaler_mean, scaler_std):
-        # Aplica a Padronização Z-Score (Escala Acadêmica) antes de calcular o erro
-        y_true_scaled = (y_true - scaler_mean) / scaler_std
-        y_pred_scaled = (y_pred - scaler_mean) / scaler_std
+        return calculate_metrics(y_true, y_pred, scaler_mean, scaler_std)
 
-        mse = np.mean((y_true_scaled - y_pred_scaled) ** 2)
-        mae = np.mean(np.abs(y_true_scaled - y_pred_scaled))
-        return mse, mae
+    @staticmethod
+    def load_actuals(info):
+        """Dados reais (gabarito) em ordem temporal, com colunas ds e y_real."""
+        df_raw = pd.read_csv(BASE_DIR / info["path"])
+        df_raw = df_raw[[info["date_column"], info["target_column"]]].copy()
+        df_raw.columns = ["ds", "y_real"]
+        df_raw["ds"] = pd.to_datetime(df_raw["ds"])
+        return df_raw
 
     def process_dataset(self, current_dataset, info):
         """Processa as métricas de um único dataset de forma isolada."""
@@ -202,10 +266,7 @@ class MetricsMultiHorizon:
             df_preds = pd.merge(df_preds, df_hp.drop(columns=["unique_id"], errors="ignore"), on="ds", how="inner")
 
         # 4. Carrega os Dados Reais (O Gabarito)
-        df_raw = pd.read_csv(BASE_DIR / info["path"])
-        df_raw = df_raw[[info["date_column"], info["target_column"]]].copy()
-        df_raw.columns = ["ds", "y_real"]
-        df_raw["ds"] = pd.to_datetime(df_raw["ds"])
+        df_raw = self.load_actuals(info)
 
         # Cruza tudo pela data exata
         df_eval = pd.merge(df_preds, df_raw, on="ds", how="inner")
@@ -255,8 +316,79 @@ class MetricsMultiHorizon:
         df_results.to_csv(out_file, index=False)
         print(f"💾 Salvo em: {self.metrics_dir.name}/{out_file.name}")
 
+    def process_dataset_rolling(self, current_dataset, info):
+        """Protocolo rolling: avalia todas as origens do bloco de teste e resume média ± desvio."""
+        print(f"\n📊 Processando (rolling): {current_dataset}...")
+
+        df_raw = self.load_actuals(info).sort_values("ds").reset_index(drop=True)
+        origins = get_rolling_origins(info, len(df_raw))
+        max_h = info["max_horizon"]
+        print(
+            f"   > {len(origins)} janelas de {max_h} passos | primeira previsão em {df_raw['ds'].iloc[origins[0]]}, "
+            f"última origem em {df_raw['ds'].iloc[origins[-1]]}"
+        )
+
+        # 1. Baselines ingênuos em cada origem (sempre disponíveis, calculados dos dados reais)
+        naive_frames = []
+        for start in origins:
+            df_naive = naive_forecasts(df_raw, df_raw["ds"].iloc[start], max_h, info["seasonal_period"])
+            df_naive.insert(0, "cutoff", df_raw["ds"].iloc[start - 1])
+            naive_frames.append(df_naive)
+        df_preds = pd.concat(naive_frames, ignore_index=True)
+
+        # 2. Previsões rolling dos modelos (geradas pelos scripts de treino com protocol=rolling)
+        model_cols = set(MODEL_COLUMNS.values())
+        for dir_key, suffix in ROLLING_SOURCES.items():
+            rolling_file = BASE_DIR / self.config["results_paths"][dir_key] / f"{current_dataset}_{suffix}_rolling.csv"
+            if not rolling_file.exists():
+                continue
+            df_m = pd.read_csv(rolling_file, parse_dates=["cutoff", "ds"])
+            if dir_key == "deep_learning":
+                df_m = df_m.rename(columns={"NHITS": "NHITS_Standalone", "Informer": "Informer_Standalone"})
+            # Só as colunas de modelo ainda não carregadas (ex.: o arquivo do híbrido também traz o ARIMA)
+            keep = [c for c in df_m.columns if c in model_cols and c not in df_preds.columns]
+            df_preds = pd.merge(df_preds, df_m[["cutoff", "ds"] + keep], on=["cutoff", "ds"], how="left")
+            print(f"   > Carregado: {rolling_file.name} ({', '.join(keep) or 'nenhuma coluna nova'})")
+
+        # 3. Gabarito
+        df_eval = pd.merge(df_preds, df_raw, on="ds", how="inner")
+
+        # 4. Normalização e checagens (mesmas do protocolo single_split)
+        train_size = info.get("train_size")
+        norm_mean, norm_std = compute_norm_stats(df_raw, self.norm_stats, train_size)
+        if self.norm_stats == "train":
+            check_no_train_overlap(df_raw, df_eval, train_size)
+        print(f"   > Normalização: {self.norm_stats} (média={norm_mean:.3f}, desvio={norm_std:.3f})")
+
+        model_columns = MODEL_COLUMNS
+        check_model_columns(df_eval, model_columns)
+        check_bias(df_eval, model_columns, reference_std=norm_std)
+
+        # 5. Métricas por janela e resumo
+        horizons = info.get("forecast_horizon", [96, 192, 336, 720])
+        df_windows, df_summary = evaluate_rolling(df_eval, horizons, model_columns, norm_mean, norm_std)
+
+        incomplete = df_summary.loc[df_summary["n_janelas"] < len(origins), "Modelo"].unique()
+        if len(incomplete):
+            print(f"   ⚠️ Aviso: modelos sem previsão em todas as {len(origins)} janelas: {', '.join(incomplete)}")
+
+        for df in (df_windows, df_summary):
+            num_cols = df.select_dtypes("number").columns.drop(["Horizonte", "n_janelas"], errors="ignore")
+            df[num_cols] = df[num_cols].round(4)
+            df["Normalizacao"] = self.norm_stats
+
+        print("-" * 60)
+        print(df_summary.to_string(index=False))
+
+        out_summary = self.metrics_dir / f"{current_dataset}_evaluation_rolling.csv"
+        out_windows = self.metrics_dir / f"{current_dataset}_evaluation_rolling_windows.csv"
+        df_summary.to_csv(out_summary, index=False)
+        df_windows.to_csv(out_windows, index=False)
+        print(f"💾 Salvo em: {self.metrics_dir.name}/{out_summary.name} e {out_windows.name}")
+
     def run(self):
         print("\n📈 [PASSO 8] Avaliação Multi-Horizonte (Escala Acadêmica Z-Score)")
+        print(f"   Protocolo: {self.protocol} | Normalização: {self.norm_stats}")
 
         # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
         datasets_to_run = get_datasets()
@@ -268,7 +400,10 @@ class MetricsMultiHorizon:
         # 2. ITERAÇÃO LIMPA
         for ds_name, info in datasets_to_run.items():
             try:
-                self.process_dataset(ds_name, info)
+                if self.protocol == "rolling":
+                    self.process_dataset_rolling(ds_name, info)
+                else:
+                    self.process_dataset(ds_name, info)
             except Exception as e:
                 print(f"   ❌ Erro ao processar o dataset {ds_name}: {e}")
 
