@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
-from src.utils.general import get_datasets, get_rolling_origins
+from src.utils.general import get_datasets, get_protocol, get_rolling_origins
 
 warnings.filterwarnings("ignore")
 
@@ -147,8 +147,6 @@ def calculate_metrics(y_true, y_pred, scaler_mean, scaler_std):
 # ==============================================================================
 # PROTOCOLO ROLLING (várias origens no bloco de teste)
 # ==============================================================================
-PROTOCOL_OPTIONS = ("single_split", "rolling")
-
 # Pasta (chave em results_paths) -> sufixo do arquivo {dataset}_{sufixo}_rolling.csv.
 # Formato longo esperado: cutoff, ds, <colunas de MODEL_COLUMNS> (unique_id e y são ignorados).
 ROLLING_SOURCES = {
@@ -205,9 +203,7 @@ class MetricsMultiHorizon:
 
         eval_config = self.config.get("evaluation", {})
         self.norm_stats = eval_config.get("norm_stats", "global")
-        self.protocol = eval_config.get("protocol", "single_split")
-        if self.protocol not in PROTOCOL_OPTIONS:
-            raise ValueError(f"evaluation.protocol inválido: '{self.protocol}'. Use um de {PROTOCOL_OPTIONS}.")
+        self.protocol = get_protocol(self.config)
 
     def calculate_metrics(self, y_true, y_pred, scaler_mean, scaler_std):
         return calculate_metrics(y_true, y_pred, scaler_mean, scaler_std)

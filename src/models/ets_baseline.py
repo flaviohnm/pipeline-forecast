@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução e o preparador de dados
-from src.utils.general import get_datasets, prepare_data
+from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, prepare_data, rolling_input
 
 warnings.filterwarnings("ignore")
 
@@ -24,6 +24,25 @@ class ETSBaselineTrainer:
 
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["ets"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
+        self.protocol = get_protocol(self.config)
+
+    def run_rolling(self, name, info, df):
+        """Protocolo rolling: ajusta uma vez até a 1ª origem e atualiza o estado nas demais (refit=False)."""
+        df_cv, origins, cv_kwargs = rolling_input(df, info)
+        print(
+            f"   > Rolling: {len(origins)} janelas de H={cv_kwargs['h']} a cada {cv_kwargs['step_size']} passos | "
+            f"ajuste em {origins[0]} pontos (treino+val), parâmetros fixos nas demais janelas"
+        )
+
+        models = [AutoETS(season_length=info["seasonal_period"], model="ZZA")]
+        sf = StatsForecast(models=models, freq=info["freq"], n_jobs=-1)
+        cv = sf.cross_validation(df=df_cv, refit=False, **cv_kwargs).reset_index()
+        cv = cv.rename(columns={"AutoETS": "ETS"})
+        check_rolling_cutoffs(cv, df, origins)
+
+        out_file = self.forecast_dir / f"{name}_ets_rolling.csv"
+        cv[["unique_id", "cutoff", "ds", "y", "ETS"]].to_csv(out_file, index=False)
+        print(f"✅ Previsões rolling ETS salvas em: {self.forecast_dir.name}/{out_file.name}")
 
     def run(self):
         print("\n📉 Iniciando Treinamento: Baseline Estatística (AutoETS)")
@@ -48,6 +67,10 @@ class ETSBaselineTrainer:
                 
             df_raw = pd.read_csv(raw_file)
             df = prepare_data(df_raw, info, name)
+
+            if self.protocol == "rolling":
+                self.run_rolling(name, info, df)
+                continue
 
             # Os parâmetros já vêm mastigados do general.py
             horizon = info["max_horizon"]

@@ -171,6 +171,43 @@ def get_rolling_origins(info, n_rows):
     return list(range(test_start, test_end - max_h + 1, rolling["step_size"]))
 
 
+PROTOCOL_OPTIONS = ("single_split", "rolling")
+
+
+def get_protocol(config):
+    """Protocolo de avaliação configurado em evaluation.protocol (padrão: single_split)."""
+    protocol = config.get("evaluation", {}).get("protocol", "single_split")
+    if protocol not in PROTOCOL_OPTIONS:
+        raise ValueError(f"evaluation.protocol inválido: '{protocol}'. Use um de {PROTOCOL_OPTIONS}.")
+    return protocol
+
+
+def rolling_input(df, info):
+    """
+    Prepara a série para cross_validation do Nixtla no protocolo rolling.
+    As janelas do Nixtla são contadas a partir do FIM do DataFrame, então a série é cortada
+    no fim da última janela; assim as origens coincidem com get_rolling_origins.
+    Retorna (df_cortado, origens, kwargs para cross_validation).
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    origins = get_rolling_origins(info, len(df))
+    df_cut = df.iloc[: origins[-1] + info["max_horizon"]]
+    cv_kwargs = {"h": info["max_horizon"], "n_windows": len(origins), "step_size": info["rolling"]["step_size"]}
+    return df_cut, origins, cv_kwargs
+
+
+def check_rolling_cutoffs(df_cv, df, origins):
+    """Garante que os cutoffs gerados pelo Nixtla são exatamente os esperados pelo protocolo."""
+    df = df.sort_values("ds").reset_index(drop=True)
+    expected = list(df["ds"].iloc[[o - 1 for o in origins]])
+    got = sorted(pd.to_datetime(df_cv["cutoff"]).unique())
+    if got != expected:
+        raise ValueError(
+            f"Cutoffs gerados ({len(got)}: {got[:1]}...{got[-1:]}) diferentes dos esperados "
+            f"({len(expected)}: {expected[:1]}...{expected[-1:]})."
+        )
+
+
 def prepare_data(df, info, name):
     """
     Padroniza os dados brutos para o formato exigido pelo Nixtla (StatsForecast/NeuralForecast).
