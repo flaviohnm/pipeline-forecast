@@ -196,8 +196,11 @@ def rolling_input(df, info):
     return df_cut, origins, cv_kwargs
 
 
-def check_rolling_cutoffs(df_cv, df, origins):
-    """Garante que os cutoffs gerados pelo Nixtla são exatamente os esperados pelo protocolo."""
+def check_rolling_cutoffs(df_cv, df, origins, h=None):
+    """
+    Garante que os cutoffs gerados pelo Nixtla são exatamente os esperados pelo protocolo.
+    Com `h`, confere também que cada janela tem as h datas seguintes ao seu cutoff.
+    """
     df = df.sort_values("ds").reset_index(drop=True)
     expected = list(df["ds"].iloc[[o - 1 for o in origins]])
     got = sorted(pd.to_datetime(df_cv["cutoff"]).unique())
@@ -206,6 +209,17 @@ def check_rolling_cutoffs(df_cv, df, origins):
             f"Cutoffs gerados ({len(got)}: {got[:1]}...{got[-1:]}) diferentes dos esperados "
             f"({len(expected)}: {expected[:1]}...{expected[-1:]})."
         )
+
+    if h is not None:
+        cv_dates = pd.to_datetime(df_cv["ds"])
+        cv_cutoffs = pd.to_datetime(df_cv["cutoff"])
+        for start in origins:
+            window = sorted(cv_dates[cv_cutoffs == df["ds"].iloc[start - 1]])
+            if window != list(df["ds"].iloc[start : start + h]):
+                raise ValueError(
+                    f"Janela com cutoff {df['ds'].iloc[start - 1]}: datas previstas não correspondem "
+                    f"aos {h} passos seguintes da série ({len(window)} datas geradas)."
+                )
 
 
 def prepare_data(df, info, name):

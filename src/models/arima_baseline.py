@@ -41,7 +41,7 @@ class ArimaScientificBaseline:
         sf = StatsForecast(models=models, freq=info["freq"], n_jobs=-1)
         cv = sf.cross_validation(df=df_cv, refit=False, **cv_kwargs).reset_index()
         cv = cv.rename(columns={"AutoARIMA": "ARIMA"})
-        check_rolling_cutoffs(cv, df, origins)
+        check_rolling_cutoffs(cv, df, origins, h=cv_kwargs["h"])
 
         out_path = self.forecast_dir / f"{name}_arima_rolling.csv"
         cv[["unique_id", "cutoff", "ds", "y", "ARIMA"]].to_csv(out_path, index=False)

@@ -38,7 +38,7 @@ class ETSBaselineTrainer:
         sf = StatsForecast(models=models, freq=info["freq"], n_jobs=-1)
         cv = sf.cross_validation(df=df_cv, refit=False, **cv_kwargs).reset_index()
         cv = cv.rename(columns={"AutoETS": "ETS"})
-        check_rolling_cutoffs(cv, df, origins)
+        check_rolling_cutoffs(cv, df, origins, h=cv_kwargs["h"])
 
         out_file = self.forecast_dir / f"{name}_ets_rolling.csv"
         cv[["unique_id", "cutoff", "ds", "y", "ETS"]].to_csv(out_file, index=False)
