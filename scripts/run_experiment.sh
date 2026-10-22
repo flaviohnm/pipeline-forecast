@@ -2,8 +2,6 @@
 
 # ==============================================================================
 # PREVENÇÃO DE SUSPENSÃO (Cross-Platform)
-# Verifica se o sistema suporta systemd-inhibit (Linux) antes de usá-lo.
-# No Windows/Git Bash, a variável fica vazia e não quebra a execução.
 # ==============================================================================
 INHIBIT_CMD=""
 if command -v systemd-inhibit &> /dev/null; then
@@ -12,10 +10,6 @@ fi
 
 # ==============================================================================
 # LOGGING E RASTREABILIDADE
-# Cada execução gera um log completo em disco (logs/) e uma linha em
-# results/execution_times.csv com timestamp, duração, status e commit do git.
-# Isso é essencial para reportar custo computacional na dissertação e para
-# não perder o output se a sessão SSH cair.
 # ==============================================================================
 LOG_DIR="logs"
 RESULTS_DIR="results"
@@ -31,9 +25,7 @@ get_git_commit() {
 }
 
 # ==============================================================================
-# FUNÇÃO AUXILIAR: Executa um comando, cronometra, loga em arquivo e registra
-# o resultado no CSV. Retorna o status de saída do comando (em vez de matar
-# o script inteiro), para que o menu continue disponível após uma falha.
+# FUNÇÃO AUXILIAR
 # ==============================================================================
 run_and_time() {
     local step_name=$1
@@ -49,7 +41,6 @@ run_and_time() {
 
     local start_time=$(date +%s)
 
-    # Executa o comando, mostra a saída na tela E salva em arquivo
     eval "$cmd" 2>&1 | tee "$log_file"
     local status=${PIPESTATUS[0]}
 
@@ -78,8 +69,6 @@ run_and_time() {
 
 # ==============================================================================
 # PIPELINE COMPLETO
-# Isolado em função para poder abortar cedo (sem `exit`) se uma etapa falhar,
-# preservando o menu interativo e o restante da run_experiment.sh.
 # ==============================================================================
 run_full_pipeline() {
     echo "🚀 Iniciando Execução Completa (conforme configurado em general.py)..."
@@ -112,8 +101,7 @@ run_full_pipeline() {
 }
 
 # ==============================================================================
-# EXECUTA UMA OPÇÃO DO MENU (usado tanto pelo modo interativo quanto pelo
-# modo não-interativo/CLI)
+# EXECUTA UMA OPÇÃO DO MENU
 # ==============================================================================
 executar_opcao() {
     local OPCAO=$1
@@ -140,33 +128,22 @@ export TF_ENABLE_ONEDNN_OPTS=0
 
 # ==============================================================================
 # FORÇA UTF-8 NO PYTHON
-# Quando a saída do Python deixa de ir direto pro terminal e passa a ser
-# redirecionada (como agora, pro `tee`), o Windows volta a usar o encoding
-# padrão do console (cp1252), que quebra em prints com emoji/acentuação.
-# Isso força UTF-8 sempre, terminal ou pipe, Windows ou Linux.
 # ==============================================================================
 export PYTHONIOENCODING="utf-8"
 export PYTHONUTF8=1
 
-# Verifica se o Poetry está acessível (checagem única, fora do loop)
 if ! command -v poetry &> /dev/null; then
     echo "❌ ERRO: Poetry não encontrado! Execute o bash setup_venv.sh primeiro."
     exit 1
 fi
 
-# ==============================================================================
-# MODO NÃO-INTERATIVO: `bash run_experiment.sh <opcao>`
-# Essencial para rodar em background/servidor remoto sem precisar ficar
-# respondendo ao menu, ex.: nohup bash run_experiment.sh 1 > full_run.log 2>&1 &
-# ou dentro de um `tmux`/`screen` que você pode desconectar com segurança.
-# ==============================================================================
 if [ -n "$1" ]; then
     executar_opcao "$1"
     exit $?
 fi
 
 # ==============================================================================
-# MODO INTERATIVO: menu em loop (comportamento original)
+# MODO INTERATIVO
 # ==============================================================================
 while true; do
     clear
