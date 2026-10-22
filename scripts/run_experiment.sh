@@ -203,7 +203,9 @@ export TF_ENABLE_ONEDNN_OPTS=0
 # FORÇA UTF-8 NO PYTHON
 # ==============================================================================
 export PYTHONIOENCODING="utf-8"
-export PYTHONUTF8=1
+# Não usar PYTHONUTF8=1: no Windows em português, o cmdstanpy lê a saída do where.exe (cp850)
+# como UTF-8, falha e o Prophet fica sem backend ('Prophet' object has no attribute 'stan_backend').
+# PYTHONIOENCODING já garante os emojis nos logs.
 
 if ! command -v poetry &> /dev/null; then
     echo "❌ ERRO: Poetry não encontrado! Execute o bash setup_venv.sh primeiro."
