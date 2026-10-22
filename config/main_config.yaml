@@ -23,3 +23,10 @@ results_paths:
 
 # Configurações Globais
 random_seed: 42
+
+# Avaliação
+evaluation:
+  # Estatísticas (média/desvio) da normalização z-score usada nas métricas:
+  #   global -> série inteira, incluindo o período de teste (comportamento original)
+  #   train  -> só o bloco de treino ("train_size" de cada dataset em general.py), sem vazamento do teste
+  norm_stats: "global"

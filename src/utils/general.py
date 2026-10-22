@@ -48,6 +48,8 @@ DATASETS_INFO = {
         "forecast_horizon": [24, 48, 168, 336, 720],
         "max_horizon": 720,
         "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 8640,
         "val_size": 720,
         "seasonal_period": 24,
     },
@@ -60,6 +62,8 @@ DATASETS_INFO = {
         "forecast_horizon": [24, 48, 168, 336, 720],
         "max_horizon": 720,
         "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 8640,
         "val_size": 720,
         "seasonal_period": 24,
     },
@@ -72,6 +76,8 @@ DATASETS_INFO = {
         "forecast_horizon": [24, 48, 96, 288, 672],
         "max_horizon": 672,
         "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 34560,
         "val_size": 720,
         "seasonal_period": 96,
     },

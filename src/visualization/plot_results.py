@@ -80,7 +80,7 @@ class ResultsPlotter:
         # Junta os dados
         df_plot = pd.merge(df_preds, df_raw, on="ds", how="inner")
 
-        # Vamos focar apenas nos últimos 192 pontos para o gráfico não ficar confuso
+        # Vamos focar apenas nos primeiros 192 pontos do período de teste para o gráfico não ficar confuso
         zoom_horizon = 192
         df_plot = df_plot.head(zoom_horizon)
 
@@ -103,7 +103,7 @@ class ResultsPlotter:
         )
 
         plt.title(
-            f"Previsão de Curto/Médio Prazo: Real vs Modelos ({dataset_name} - Últimas {zoom_horizon}h)",
+            f"Previsão de Curto/Médio Prazo: Real vs Modelos ({dataset_name} - Primeiras {zoom_horizon}h do teste)",
             fontsize=14,
             fontweight="bold",
         )
