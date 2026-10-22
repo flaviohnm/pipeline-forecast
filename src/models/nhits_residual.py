@@ -12,9 +12,33 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
-from src.utils.general import get_datasets
+from src.models.deep_baselines import fit_predict_rolling
+from src.utils.general import get_datasets, get_protocol, prepare_data
 
 warnings.filterwarnings("ignore")
+
+
+def build_nhits(horizon, input_size, random_seed):
+    """N-HiTS sobre os resíduos do ARIMA (mesma definição nos protocolos single_split e rolling)."""
+    return NHITS(
+        h=horizon,
+        input_size=input_size,
+        max_steps=400,  # Limite de épocas (ciclos de treino)
+        batch_size=32,
+        accelerator="cpu",
+        early_stop_patience_steps=3,  # Para o treino se parar de melhorar
+        random_seed=random_seed,
+    )
+
+
+def residuals_on_full_dates(df_res, df_full):
+    """
+    Alinha os resíduos (que terminam no último cutoff) às datas da série completa.
+    As datas após o último cutoff ficam sem valor: nunca entram em treino nem em contexto
+    (fit_predict_rolling falha se isso acontecer).
+    """
+    out = df_full[["unique_id", "ds"]].merge(df_res[["ds", "y"]], on="ds", how="left")
+    return out.sort_values("ds").reset_index(drop=True)
 
 
 class HybridNHITSTrainer:
@@ -25,6 +49,29 @@ class HybridNHITSTrainer:
 
         self.resid_dir = BASE_DIR / self.config["results_paths"]["residuals"]
         self.resid_dir.mkdir(parents=True, exist_ok=True)
+        self.protocol = get_protocol(self.config)
+
+    def run_rolling(self, name, info):
+        """Treina o N-HiTS uma vez nos resíduos de treino+val e prevê o resíduo em cada origem do teste."""
+        resid_path = self.resid_dir / f"{name}_arima_residuals_rolling.csv"
+        if not resid_path.exists():
+            print(f"⚠️ Resíduos rolling do ARIMA não encontrados em: {resid_path}. Pulando...")
+            return
+
+        df_res = pd.read_csv(resid_path, parse_dates=["ds"])
+        df_full = prepare_data(pd.read_csv(BASE_DIR / info["path"]), info, name)
+        df_res = residuals_on_full_dates(df_res, df_full)
+
+        horizon = info["max_horizon"]
+        input_size = horizon * 2
+        print(f"   > Rolling: treino em treino+val, contexto de {input_size} resíduos por origem")
+
+        model = build_nhits(horizon, input_size, self.config["random_seed"])
+        forecasts = fit_predict_rolling("NHITS", model, df_res, info, input_size)
+
+        out_file = self.resid_dir / f"{name}_nhits_residuals_rolling.csv"
+        forecasts.to_csv(out_file, index=False)
+        print(f"✅ Previsões rolling do N-HiTS salvas em: {self.resid_dir.name}/{out_file.name}")
 
     def run(self):
         print("\n🧠 [PASSO 4] Iniciando Janelamento e Treino do N-HiTS sobre os Resíduos")
@@ -41,6 +88,10 @@ class HybridNHITSTrainer:
             print(f"\n=======================================")
             print(f"🧠 Processando N-HiTS (Resíduos) para: {name}")
             print(f"=======================================")
+
+            if self.protocol == "rolling":
+                self.run_rolling(name, info)
+                continue
 
             # 3. Carrega os resíduos (O erro não-linear extraído do ARIMA)
             resid_path = self.resid_dir / f"{name}_arima_residuals.csv"
@@ -70,17 +121,7 @@ class HybridNHITSTrainer:
             print(f"   > Validation Size (Protegido): {safe_val_size} pontos")
 
             # 4. Configura a Rede Neural N-HiTS
-            models = [
-                NHITS(
-                    h=horizon,
-                    input_size=input_size,
-                    max_steps=400,  # Limite de épocas (ciclos de treino)
-                    batch_size=32,
-                    accelerator="cpu",
-                    early_stop_patience_steps=3,  # Para o treino se parar de melhorar
-                    random_seed=self.config["random_seed"],
-                )
-            ]
+            models = [build_nhits(horizon, input_size, self.config["random_seed"])]
 
             # 5. Inicializa o motor da Nixtla
             nf = NeuralForecast(models=models, freq=info["freq"])

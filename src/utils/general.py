@@ -48,8 +48,13 @@ DATASETS_INFO = {
         "forecast_horizon": [24, 48, 168, 336, 720],
         "max_horizon": 720,
         "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 8640,
         "val_size": 720,
         "seasonal_period": 24,
+        # Protocolo rolling (evaluation.protocol): blocos treino/val/teste de 12/4/4 meses,
+        # origens a cada 1 semana dentro do bloco de teste
+        "rolling": {"val_size": 2880, "test_size": 2880, "step_size": 168},
     },
     "ETTh2": {
         "filename": "ETTh2.csv",
@@ -60,20 +65,29 @@ DATASETS_INFO = {
         "forecast_horizon": [24, 48, 168, 336, 720],
         "max_horizon": 720,
         "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 8640,
         "val_size": 720,
         "seasonal_period": 24,
+        # Protocolo rolling (evaluation.protocol): blocos treino/val/teste de 12/4/4 meses,
+        # origens a cada 1 semana dentro do bloco de teste
+        "rolling": {"val_size": 2880, "test_size": 2880, "step_size": 168},
     },
     "ETTm1": {
         "filename": "ETTm1.csv",
         "url": "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTm1.csv",
         "target_column": "OT",
         "date_column": "date",
-        "freq": "t",
+        "freq": "15min",
         "forecast_horizon": [24, 48, 96, 288, 672],
         "max_horizon": 672,
         "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 34560,
         "val_size": 720,
         "seasonal_period": 96,
+        # Protocolo rolling: 12/4/4 meses em passos de 15 min, origens a cada 1 semana
+        "rolling": {"val_size": 11520, "test_size": 11520, "step_size": 672},
     },
     "ECL": {
         "filename": "ECL.csv",
@@ -92,7 +106,7 @@ DATASETS_INFO = {
         "url": "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/weather.csv",
         "target_column": "OT",
         "date_column": "date",
-        "freq": "10t",
+        "freq": "10min",
         "forecast_horizon": [24, 48, 168, 336, 720],
         "max_horizon": 720,
         "test_size": 10539,
@@ -131,6 +145,81 @@ def get_datasets():
             print(f"⚠️ Aviso: Dataset '{ds}' não configurado em DATASETS_INFO. Ignorando...")
 
     return selected_datasets
+
+
+def get_rolling_origins(info, n_rows):
+    """
+    Posições (na série em ordem temporal) do primeiro passo previsto em cada janela do protocolo rolling.
+
+    Blocos: treino [0, train_size) | validação [train_size, +val_size) | teste [+val_size, +test_size).
+    Cada janela prevê max_horizon passos e precisa caber inteira no bloco de teste; as origens
+    avançam step_size passos. O modelo usa dados até a posição (origem - 1), chamada de "cutoff".
+    """
+    rolling = info.get("rolling")
+    if not rolling or not info.get("train_size"):
+        raise ValueError("Protocolo rolling exige 'train_size' e 'rolling' configurados para o dataset.")
+
+    max_h = info["max_horizon"]
+    test_start = info["train_size"] + rolling["val_size"]
+    test_end = test_start + rolling["test_size"]
+
+    if rolling["test_size"] < max_h:
+        raise ValueError(f"Bloco de teste ({rolling['test_size']}) menor que o horizonte máximo ({max_h}).")
+    if test_end > n_rows:
+        raise ValueError(f"Blocos treino+val+teste ({test_end}) excedem o tamanho da série ({n_rows}).")
+
+    return list(range(test_start, test_end - max_h + 1, rolling["step_size"]))
+
+
+PROTOCOL_OPTIONS = ("single_split", "rolling")
+
+
+def get_protocol(config):
+    """Protocolo de avaliação configurado em evaluation.protocol (padrão: single_split)."""
+    protocol = config.get("evaluation", {}).get("protocol", "single_split")
+    if protocol not in PROTOCOL_OPTIONS:
+        raise ValueError(f"evaluation.protocol inválido: '{protocol}'. Use um de {PROTOCOL_OPTIONS}.")
+    return protocol
+
+
+def rolling_input(df, info):
+    """
+    Prepara a série para cross_validation do Nixtla no protocolo rolling.
+    As janelas do Nixtla são contadas a partir do FIM do DataFrame, então a série é cortada
+    no fim da última janela; assim as origens coincidem com get_rolling_origins.
+    Retorna (df_cortado, origens, kwargs para cross_validation).
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    origins = get_rolling_origins(info, len(df))
+    df_cut = df.iloc[: origins[-1] + info["max_horizon"]]
+    cv_kwargs = {"h": info["max_horizon"], "n_windows": len(origins), "step_size": info["rolling"]["step_size"]}
+    return df_cut, origins, cv_kwargs
+
+
+def check_rolling_cutoffs(df_cv, df, origins, h=None):
+    """
+    Garante que os cutoffs gerados pelo Nixtla são exatamente os esperados pelo protocolo.
+    Com `h`, confere também que cada janela tem as h datas seguintes ao seu cutoff.
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    expected = list(df["ds"].iloc[[o - 1 for o in origins]])
+    got = sorted(pd.to_datetime(df_cv["cutoff"]).unique())
+    if got != expected:
+        raise ValueError(
+            f"Cutoffs gerados ({len(got)}: {got[:1]}...{got[-1:]}) diferentes dos esperados "
+            f"({len(expected)}: {expected[:1]}...{expected[-1:]})."
+        )
+
+    if h is not None:
+        cv_dates = pd.to_datetime(df_cv["ds"])
+        cv_cutoffs = pd.to_datetime(df_cv["cutoff"])
+        for start in origins:
+            window = sorted(cv_dates[cv_cutoffs == df["ds"].iloc[start - 1]])
+            if window != list(df["ds"].iloc[start : start + h]):
+                raise ValueError(
+                    f"Janela com cutoff {df['ds'].iloc[start - 1]}: datas previstas não correspondem "
+                    f"aos {h} passos seguintes da série ({len(window)} datas geradas)."
+                )
 
 
 def prepare_data(df, info, name):

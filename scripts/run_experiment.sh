@@ -24,6 +24,11 @@ get_git_commit() {
     git rev-parse --short HEAD 2>/dev/null || echo "N/A"
 }
 
+# Estado da execução atual (usado no resumo final do pipeline completo)
+RUN_LOGS=()        # logs gerados nesta execução
+FAILED_STEPS=""    # etapas que falharam, separadas por espaço
+SKIPPED_STEPS=""   # etapas puladas por dependerem de uma etapa que falhou
+
 # ==============================================================================
 # FUNÇÃO AUXILIAR
 # ==============================================================================
@@ -33,6 +38,7 @@ run_and_time() {
     local slug
     slug=$(echo "$step_name" | tr ' /()' '_' | tr -cd '[:alnum:]_-')
     local log_file="${LOG_DIR}/${slug}_$(date +%Y%m%d_%H%M%S).log"
+    RUN_LOGS+=("$log_file")
 
     echo "======================================================="
     echo "⏳ Iniciando: $step_name"
@@ -68,6 +74,59 @@ run_and_time() {
 }
 
 # ==============================================================================
+# EXECUÇÃO TOLERANTE A FALHAS
+# ==============================================================================
+# Roda a etapa só se nenhuma dependência falhou; registra falhas sem interromper o pipeline.
+# Uso: run_step "Nome_Etapa" "comando" [Dependencia1 Dependencia2 ...]
+run_step() {
+    local step_name=$1
+    local cmd=$2
+    shift 2
+
+    local dep
+    for dep in "$@"; do
+        if [[ " $FAILED_STEPS $SKIPPED_STEPS " == *" $dep "* ]]; then
+            echo "⏭️  Pulando [$step_name]: depende de [$dep], que falhou ou foi pulada."
+            echo ""
+            SKIPPED_STEPS="$SKIPPED_STEPS $step_name"
+            return 1
+        fi
+    done
+
+    if ! run_and_time "$step_name" "$cmd"; then
+        FAILED_STEPS="$FAILED_STEPS $step_name"
+        return 1
+    fi
+}
+
+# Resumo de falhas e alertas da execução, no terminal e em results/run_summary_<data>.txt
+write_run_summary() {
+    local summary_file="${RESULTS_DIR}/run_summary_$(date +%Y%m%d_%H%M%S).txt"
+    {
+        echo "Resumo da execução - $(date '+%Y-%m-%d %H:%M:%S') - commit $(get_git_commit)"
+        echo "======================================================="
+        echo "Etapas com falha:${FAILED_STEPS:- nenhuma}"
+        echo "Etapas puladas (dependência falhou):${SKIPPED_STEPS:- nenhuma}"
+        echo ""
+        echo "Erros e alertas encontrados nos logs (❌ erro | ⚠ aviso | 🚨 alerta de viés):"
+        local found=0
+        local log
+        for log in "${RUN_LOGS[@]}"; do
+            [ -f "$log" ] || continue
+            # LC_ALL=C: busca byte a byte (o grep do Git Bash não casa emojis de 4 bytes no locale UTF-8)
+            if LC_ALL=C grep -qE "❌|⚠|🚨" "$log"; then
+                found=1
+                echo "--- $log"
+                LC_ALL=C grep -E "❌|⚠|🚨" "$log"
+            fi
+        done
+        [ "$found" -eq 0 ] && echo "  nenhum"
+    } | tee "$summary_file"
+    echo ""
+    echo "📝 Resumo salvo em: $summary_file"
+}
+
+# ==============================================================================
 # PIPELINE COMPLETO
 # ==============================================================================
 run_full_pipeline() {
@@ -75,16 +134,22 @@ run_full_pipeline() {
     echo "🔖 Commit atual: $(get_git_commit)"
     local TOTAL_START=$(date +%s)
 
-    run_and_time "Ingestao_de_Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py" || return 1
-    run_and_time "AutoETS_Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py" || return 1
-    run_and_time "Prophet_Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py" || return 1
-    run_and_time "ARIMA_Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py" || return 1
-    run_and_time "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" || return 1
-    run_and_time "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" || return 1
-    run_and_time "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py" || return 1
-    run_and_time "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py" || return 1
-    run_and_time "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py" || return 1
-    run_and_time "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" || return 1
+    # Sem dados não há o que treinar: a ingestão é a única etapa que interrompe o pipeline
+    if ! run_step "Ingestao_de_Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py"; then
+        write_run_summary
+        return 1
+    fi
+
+    # Uma falha nas etapas abaixo não interrompe as demais; só pula quem depende dela
+    run_step "AutoETS_Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py"
+    run_step "Prophet_Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py"
+    run_step "ARIMA_Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py"
+    run_step "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" ARIMA_Baseline
+    run_step "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" ARIMA_Baseline NHiTS_Treino_Residuos
+    run_step "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py"
+    run_step "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py"
+    run_step "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py"
+    run_step "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" Avaliacao_de_Metricas
 
     local TOTAL_END=$(date +%s)
     local TOTAL_ELAPSED=$((TOTAL_END - TOTAL_START))
@@ -93,11 +158,19 @@ run_full_pipeline() {
     local TOTAL_S=$((TOTAL_ELAPSED % 60))
 
     echo "======================================================="
-    echo "🎉 Experimento Completo Finalizado com Sucesso!"
+    if [ -z "$FAILED_STEPS$SKIPPED_STEPS" ]; then
+        echo "🎉 Experimento Completo Finalizado com Sucesso!"
+    else
+        echo "⚠️  Experimento finalizado COM FALHAS (veja o resumo abaixo)"
+    fi
     echo "⏱️  TEMPO TOTAL DE EXECUÇÃO: ${TOTAL_H}h ${TOTAL_M}m ${TOTAL_S}s"
     echo "📂 Resultados disponíveis na pasta results/"
     echo "📊 Tempos por etapa: ${TIMES_CSV}"
     echo "======================================================="
+    write_run_summary
+
+    # Código de saída != 0 se algo falhou, mas só depois de rodar tudo o que era possível
+    [ -z "$FAILED_STEPS$SKIPPED_STEPS" ]
 }
 
 # ==============================================================================
@@ -130,7 +203,9 @@ export TF_ENABLE_ONEDNN_OPTS=0
 # FORÇA UTF-8 NO PYTHON
 # ==============================================================================
 export PYTHONIOENCODING="utf-8"
-export PYTHONUTF8=1
+# Não usar PYTHONUTF8=1: no Windows em português, o cmdstanpy lê a saída do where.exe (cp850)
+# como UTF-8, falha e o Prophet fica sem backend ('Prophet' object has no attribute 'stan_backend').
+# PYTHONIOENCODING já garante os emojis nos logs.
 
 if ! command -v poetry &> /dev/null; then
     echo "❌ ERRO: Poetry não encontrado! Execute o bash setup_venv.sh primeiro."

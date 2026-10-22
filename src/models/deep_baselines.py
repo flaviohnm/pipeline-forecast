@@ -13,9 +13,45 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução e o preparador
-from src.utils.general import get_datasets, prepare_data
+from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, get_rolling_origins, prepare_data
 
 warnings.filterwarnings("ignore")
+
+
+def fit_predict_rolling(model_name, model_instance, df, info, input_size):
+    """
+    Protocolo rolling: treina uma única vez em treino+val (early stopping no bloco de validação)
+    e prevê cada origem do bloco de teste usando só a janela de contexto anterior ao cutoff.
+    Retorna o formato longo unique_id, cutoff, ds, <model_name>.
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    origins = get_rolling_origins(info, len(df))
+    if origins[0] < input_size:
+        raise ValueError(f"Histórico antes da 1ª origem ({origins[0]}) menor que o input_size ({input_size}).")
+
+    # Valores ausentes são aceitos só depois do último cutoff (ex.: resíduos), nunca no treino ou contexto
+    df_fit = df.iloc[: origins[0]]
+    if df_fit["y"].isna().any():
+        raise ValueError("Valores ausentes no bloco treino+val usado para treinar o modelo.")
+
+    nf = NeuralForecast(models=[model_instance], freq=info["freq"])
+    nf.fit(df=df_fit, val_size=info["rolling"]["val_size"])
+
+    frames = []
+    for start in origins:
+        context_df = df.iloc[start - input_size : start]
+        if context_df["y"].isna().any():
+            raise ValueError(f"Valores ausentes no contexto da janela com cutoff {context_df['ds'].iloc[-1]}.")
+        preds = nf.predict(df=context_df).reset_index()
+        preds["cutoff"] = context_df["ds"].iloc[-1]
+        frames.append(preds[["unique_id", "cutoff", "ds", model_name]])
+
+    del nf
+    gc.collect()
+
+    df_rolling = pd.concat(frames, ignore_index=True)
+    check_rolling_cutoffs(df_rolling, df, origins, h=info["max_horizon"])
+    return df_rolling
 
 
 class DLBaselinesTrainer:
@@ -26,6 +62,87 @@ class DLBaselinesTrainer:
 
         self.forecast_dir = BASE_DIR / self.config["results_paths"]["deep_learning"]
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
+        self.protocol = get_protocol(self.config)
+
+    def build_models(self, horizon, input_size):
+        """Definições dos modelos, compartilhadas pelos protocolos single_split e rolling."""
+        # Removemos a trava 'limit_val_batches: 0.0' para o PyTorch poder validar corretamente
+        pl_trainer_kwargs = {
+            "num_sanity_val_steps": 0,
+            "enable_progress_bar": True,
+        }
+
+        return {
+            "MLP": MLP(
+                h=horizon,
+                input_size=input_size,
+                max_steps=300,
+                batch_size=32,
+                scaler_type="standard",
+                accelerator="cpu",
+                early_stop_patience_steps=3,
+                random_seed=self.config["random_seed"],
+                num_workers_loader=0,
+                **pl_trainer_kwargs,
+            ),
+            "LSTM": LSTM(
+                h=horizon,
+                input_size=input_size,
+                max_steps=300,
+                batch_size=8,
+                encoder_hidden_size=64,
+                scaler_type="standard",
+                accelerator="cpu",
+                early_stop_patience_steps=3,
+                random_seed=self.config["random_seed"],
+                num_workers_loader=0,
+                **pl_trainer_kwargs,
+            ),
+            "NHITS": NHITS(
+                h=horizon,
+                input_size=input_size,
+                max_steps=400,
+                batch_size=32,
+                scaler_type="standard",
+                accelerator="cpu",
+                early_stop_patience_steps=3,
+                random_seed=self.config["random_seed"],
+                num_workers_loader=0,
+                **pl_trainer_kwargs,
+            ),
+            "Informer": Informer(
+                h=horizon,
+                input_size=horizon,
+                max_steps=300,
+                batch_size=8,
+                scaler_type="standard",
+                accelerator="cpu",
+                early_stop_patience_steps=3,
+                random_seed=self.config["random_seed"],
+                num_workers_loader=0,
+                **pl_trainer_kwargs,
+            ),
+        }
+
+    def run_rolling(self, name, info, df, input_size):
+        """Treina cada modelo uma vez e prevê todas as origens do bloco de teste."""
+        origins = get_rolling_origins(info, len(df))
+        print(
+            f"📈 Rolling: {len(origins)} janelas de H={info['max_horizon']} | treino+val = {origins[0]} pontos "
+            f"(early stopping nos últimos {info['rolling']['val_size']}) | contexto = {input_size} pontos"
+        )
+
+        df_out = None
+        for model_name, model_instance in self.build_models(info["max_horizon"], input_size).items():
+            print(f"\n🚀 Treinando modelo (rolling): {model_name}...")
+            df_model = fit_predict_rolling(model_name, model_instance, df, info, input_size)
+            df_out = df_model if df_out is None else df_out.merge(df_model, on=["unique_id", "cutoff", "ds"])
+            del model_instance
+            gc.collect()
+
+        out_file = self.forecast_dir / f"{name}_deep_rolling.csv"
+        df_out.to_csv(out_file, index=False)
+        print(f"\n✅ Previsões rolling para {name} salvas em: {self.forecast_dir.name}/{out_file.name}")
 
     def run(self):
         print("\n🤖 Iniciando Treinamento: Baselines de Deep Learning")
@@ -54,7 +171,11 @@ class DLBaselinesTrainer:
 
             # Usando o max_horizon que já vem configurado do general.py
             horizon = info["max_horizon"]
-            input_size = horizon * 2  
+            input_size = horizon * 2
+
+            if self.protocol == "rolling":
+                self.run_rolling(name, info, df, input_size)
+                continue
 
             train_df = df.iloc[:-horizon]
 
@@ -73,63 +194,7 @@ class DLBaselinesTrainer:
             print(f"📈 Horizonte: {horizon} | Tamanho de Entrada (Input Size): {input_size}")
             print(f"   > Validation Size (Protegido): {safe_val_size} pontos")
 
-            # Removemos a trava 'limit_val_batches: 0.0' para o PyTorch poder validar corretamente
-            pl_trainer_kwargs = {
-                "num_sanity_val_steps": 0,
-                "enable_progress_bar": True,
-            }
-
-            model_definitions = {
-                "MLP": MLP(
-                    h=horizon,
-                    input_size=input_size,
-                    max_steps=300,
-                    batch_size=32,
-                    scaler_type="standard",
-                    accelerator="cpu",
-                    early_stop_patience_steps=3,
-                    random_seed=self.config["random_seed"],
-                    num_workers_loader=0,
-                    **pl_trainer_kwargs,
-                ),
-                "LSTM": LSTM(
-                    h=horizon,
-                    input_size=input_size,
-                    max_steps=300,
-                    batch_size=8,
-                    encoder_hidden_size=64,
-                    scaler_type="standard",
-                    accelerator="cpu",
-                    early_stop_patience_steps=3,
-                    random_seed=self.config["random_seed"],
-                    num_workers_loader=0,
-                    **pl_trainer_kwargs,
-                ),
-                "NHITS": NHITS(
-                    h=horizon,
-                    input_size=input_size,
-                    max_steps=400,
-                    batch_size=32,
-                    scaler_type="standard",
-                    accelerator="cpu",
-                    early_stop_patience_steps=3,
-                    random_seed=self.config["random_seed"],
-                    num_workers_loader=0,
-                    **pl_trainer_kwargs,
-                ),
-                "Informer": Informer(
-                    h=horizon,
-                    input_size=horizon,
-                    max_steps=300,
-                    batch_size=8,
-                    scaler_type="standard",
-                    accelerator="cpu",
-                    early_stop_patience_steps=3,
-                    random_seed=self.config["random_seed"],
-                    num_workers_loader=0,
-                    **pl_trainer_kwargs,
-                ),
-            }
+            model_definitions = self.build_models(horizon, input_size)
 
             # --- LOOP SEQUENCIAL COM GARBAGE COLLECTION ---
             for model_name, model_instance in model_definitions.items():

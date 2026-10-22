@@ -12,9 +12,37 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução e o preparador de dados
-from src.utils.general import get_datasets, prepare_data
+from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, prepare_data, rolling_input
 
 warnings.filterwarnings("ignore")
+
+
+def arima_rolling(df, info, n_jobs=-1):
+    """
+    Protocolo rolling: ajusta o AutoARIMA uma vez em treino+val e, com os parâmetros fixos,
+    atualiza o estado em cada origem do teste (cross_validation com refit=False).
+
+    Retorna:
+    - previsões no formato longo unique_id, cutoff, ds, y, ARIMA
+    - resíduos in-sample de 1 passo (y - ajustado) até o último cutoff, com os mesmos
+      parâmetros fixos; são causais (o resíduo em t só usa dados até t-1) e alimentam o N-HiTS
+    """
+    df_cv, origins, cv_kwargs = rolling_input(df, info)
+
+    models = [AutoARIMA(season_length=info["seasonal_period"], approximation=True)]
+    sf = StatsForecast(models=models, freq=info["freq"], n_jobs=n_jobs)
+    cv = sf.cross_validation(df=df_cv, refit=False, fitted=True, **cv_kwargs).reset_index()
+    cv = cv.rename(columns={"AutoARIMA": "ARIMA"})
+    check_rolling_cutoffs(cv, df, origins, h=cv_kwargs["h"])
+
+    # A última janela tem os valores ajustados da série inteira até o último cutoff
+    fitted = sf.cross_validation_fitted_values().reset_index()
+    fitted = fitted[fitted["cutoff"] == fitted["cutoff"].max()].sort_values("ds")
+    residuals = pd.DataFrame(
+        {"unique_id": fitted["unique_id"], "ds": fitted["ds"], "y": fitted["y"] - fitted["AutoARIMA"]}
+    ).reset_index(drop=True)
+
+    return cv[["unique_id", "cutoff", "ds", "y", "ARIMA"]], residuals
 
 
 class ArimaScientificBaseline:
@@ -27,6 +55,25 @@ class ArimaScientificBaseline:
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
         self.resid_dir = BASE_DIR / self.config["results_paths"]["residuals"]
         self.resid_dir.mkdir(parents=True, exist_ok=True)
+        self.protocol = get_protocol(self.config)
+
+    def run_rolling(self, name, info, df):
+        """Protocolo rolling: ajusta uma vez até a 1ª origem e atualiza o estado nas demais (refit=False)."""
+        _, origins, cv_kwargs = rolling_input(df, info)
+        print(
+            f"   > Rolling: {len(origins)} janelas de H={cv_kwargs['h']} a cada {cv_kwargs['step_size']} passos | "
+            f"ajuste em {origins[0]} pontos (treino+val), parâmetros fixos nas demais janelas"
+        )
+
+        df_forecast, df_residuals = arima_rolling(df, info)
+
+        out_path = self.forecast_dir / f"{name}_arima_rolling.csv"
+        df_forecast.to_csv(out_path, index=False)
+        print(f"   ✅ Previsões rolling salvas em: {out_path.name}")
+
+        resid_path = self.resid_dir / f"{name}_arima_residuals_rolling.csv"
+        df_residuals.to_csv(resid_path, index=False)
+        print(f"   💾 Resíduos (parâmetros fixos, até o último cutoff) salvos em: {self.resid_dir.name}/{resid_path.name}")
 
     def run(self):
         print("\n🔬 [PASSO 1] Iniciando ARIMA Baseline Científico")
@@ -54,6 +101,10 @@ class ArimaScientificBaseline:
 
             df_raw = pd.read_csv(raw_file)
             df = prepare_data(df_raw, info, name)
+
+            if self.protocol == "rolling":
+                self.run_rolling(name, info, df)
+                continue
 
             train_df = df.iloc[:-max_h]
             test_df = df.iloc[-max_h:]

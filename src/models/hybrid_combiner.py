@@ -11,7 +11,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
-from src.utils.general import get_datasets
+from src.utils.general import get_datasets, get_protocol
+
+
+def combine_rolling(df_arima, df_nhits):
+    """
+    Y_final = ARIMA + N-HiTS(resíduo) para cada (cutoff, ds) do protocolo rolling.
+    Falha se as duas previsões não cobrirem exatamente as mesmas janelas e datas.
+    """
+    keys = ["cutoff", "ds"]
+    df_final = pd.merge(
+        df_arima[["unique_id"] + keys + ["ARIMA"]], df_nhits[keys + ["NHITS"]], on=keys, how="inner"
+    )
+    if not (len(df_final) == len(df_arima) == len(df_nhits)):
+        raise ValueError(
+            f"Previsões rolling desalinhadas: ARIMA={len(df_arima)} linhas, N-HiTS={len(df_nhits)}, "
+            f"em comum={len(df_final)}. Rode ARIMA e N-HiTS (resíduos) com o mesmo protocolo."
+        )
+    df_final["Hybrid_ARIMA_NHITS"] = df_final["ARIMA"] + df_final["NHITS"]
+    return df_final.sort_values(keys).reset_index(drop=True)
 
 
 class HybridCombiner:
@@ -25,6 +43,26 @@ class HybridCombiner:
         self.arima_dir = BASE_DIR / self.config["results_paths"]["arima"]
         self.hybrid_dir = BASE_DIR / self.config["results_paths"]["hybrid"]
         self.hybrid_dir.mkdir(parents=True, exist_ok=True)
+        self.protocol = get_protocol(self.config)
+
+    def run_rolling(self, name):
+        arima_file = self.arima_dir / f"{name}_arima_rolling.csv"
+        nhits_file = self.resid_dir / f"{name}_nhits_residuals_rolling.csv"
+        for f in (arima_file, nhits_file):
+            if not f.exists():
+                print(f"⚠️ Arquivo rolling não encontrado para {name}: {f.name}. Pulando combinação.")
+                return
+
+        df_arima = pd.read_csv(arima_file, parse_dates=["cutoff", "ds"])
+        df_nhits = pd.read_csv(nhits_file, parse_dates=["cutoff", "ds"])
+        df_final = combine_rolling(df_arima, df_nhits)
+
+        out_file = self.hybrid_dir / f"{name}_hybrid_rolling.csv"
+        df_final.to_csv(out_file, index=False)
+        print(
+            f"✅ Previsão rolling do híbrido salva em: {self.hybrid_dir.name}/{out_file.name} "
+            f"({df_final['cutoff'].nunique()} janelas)"
+        )
 
     def run(self):
         print("\n🔗 [PASSO 5] Combinando as Previsões (ARIMA + N-HiTS)")
@@ -42,6 +80,10 @@ class HybridCombiner:
             print(f"\n=======================================")
             print(f"📊 Processando combinação para: {name}")
             print(f"=======================================")
+
+            if self.protocol == "rolling":
+                self.run_rolling(name)
+                continue
 
             # Caminhos dos arquivos específicos deste dataset
             arima_file = self.arima_dir / f"{name}_arima_predictions.csv"

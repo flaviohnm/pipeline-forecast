@@ -97,6 +97,33 @@ results_paths:
   # ...
 ```
 
+## Protocolo de avaliação
+
+Também em `config/main_config.yaml`:
+
+```yaml
+evaluation:
+  norm_stats: "global"      # global | train  -> média/desvio da normalização z-score das métricas
+  protocol: "single_split"  # single_split | rolling
+```
+
+| Protocolo | Treino | Teste | Saídas de métricas |
+| --- | --- | --- | --- |
+| `single_split` (padrão, original) | série inteira menos os últimos `max_horizon` pontos | uma janela: os últimos `max_horizon` pontos | `{dataset}_evaluation_complete.csv` |
+| `rolling` | blocos treino/val/teste de 12/4/4 meses (ETT); cada modelo é treinado uma vez em treino+val | várias origens no bloco de teste, a cada 1 semana (13 janelas de 720h no ETTh1) | `{dataset}_evaluation_rolling.csv` (média ± desvio entre janelas) e `{dataset}_evaluation_rolling_windows.csv` (erro por janela) |
+
+Os blocos do `rolling` ficam em `src/utils/general.py` (`train_size` e `rolling` de cada dataset; hoje só ETTh1, ETTh2 e ETTm1).
+No `rolling`, cada modelo grava `{dataset}_{modelo}_rolling.csv` (formato longo: `cutoff, ds, previsão`):
+
+- **ARIMA / ETS:** ajuste único em treino+val; nas demais origens os parâmetros ficam fixos e só o estado é atualizado.
+- **Prophet:** reajustado em cada origem com os dados até o cutoff.
+- **Redes (MLP, LSTM, N-HiTS, Informer):** treino único em treino+val, early stopping no bloco de validação; cada origem é prevista a partir do contexto anterior ao cutoff.
+- **Híbrido ARIMA + N-HiTS:** resíduos de 1 passo do ARIMA com parâmetros fixos; N-HiTS treinado uma vez nos resíduos de treino+val.
+- **Híbrido Prophet + N-HiTS:** N-HiTS treinado uma vez nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados.
+- **Ingênuos (último valor e sazonal):** calculados na própria avaliação, nos dois protocolos.
+
+Recomendado para a dissertação: `protocol: "rolling"` com `norm_stats: "train"`.
+
 ---
 
 # 🚀 Executando o Pipeline
@@ -159,6 +186,16 @@ Cada execução gera automaticamente:
 - Um log completo por etapa em `logs/`
 - Uma linha em `results/execution_times.csv` com timestamp, duração, status e commit do git — útil para reportar custo computacional na dissertação
 
+No pipeline completo (opção 1), a falha de uma etapa **não interrompe** as demais: só são puladas as que dependem dela (N-HiTS de resíduos e Híbrido ARIMA dependem do ARIMA; gráficos dependem da avaliação). Ao final é gravado `results/run_summary_<data>.txt` com as etapas que falharam ou foram puladas e as linhas de erro (❌), aviso (⚠) e alerta de viés (🚨) dos logs. O código de saída é diferente de 0 se algo falhou.
+
+## Testes
+
+```bash
+poetry run pytest -q
+```
+
+Testes com dados sintéticos para métricas, normalização, baselines ingênuos e alinhamento/ausência de vazamento do protocolo `rolling` (inclui treinos reduzidos de statsforecast, Prophet e NeuralForecast; cerca de 3 minutos).
+
 ---
 
 # 📂 Estrutura do Projeto
@@ -211,7 +248,7 @@ pipeline-forecast/
 # 📁 Diretórios
 
 | Diretório | Descrição |
-|------------|-----------|
+| ------------ | ----------- |
 | `config/` | Configurações centrais do experimento |
 | `data/raw/` | Datasets exatamente como baixados da fonte, sem tratamento |
 | `data/bronze/` | Datasets filtrados para `date_column` + `target_column`, prontos para uso |
