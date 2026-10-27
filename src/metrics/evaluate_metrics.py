@@ -373,6 +373,7 @@ class MetricsMultiHorizon:
         if len(incomplete):
             print(f"   ⚠️ Aviso: modelos sem previsão em todas as {len(origins)} janelas: {', '.join(incomplete)}")
 
+        df_windows_full = df_windows.copy()  # sem arredondamento, para os testes estatísticos
         for df in (df_windows, df_summary):
             num_cols = df.select_dtypes("number").columns.drop(["Horizonte", "n_janelas"], errors="ignore")
             df[num_cols] = df[num_cols].round(4)
@@ -386,6 +387,14 @@ class MetricsMultiHorizon:
         df_summary.to_csv(out_summary, index=False)
         df_windows.to_csv(out_windows, index=False)
         print(f"💾 Salvo em: {self.metrics_dir.name}/{out_summary.name} e {out_windows.name}")
+
+        # 6. Testes estatísticos (Diebold-Mariano/HLN por janela e Friedman); falha aqui não invalida as métricas
+        try:
+            from src.metrics.statistical_tests import run_dm_for_dataset
+
+            run_dm_for_dataset(current_dataset, info, df_windows_full, self.metrics_dir)
+        except Exception as e:
+            print(f"   ⚠️ Testes estatísticos não executados para {current_dataset}: {e}")
 
     def run(self):
         print("\n📈 [PASSO 8] Avaliação Multi-Horizonte (Escala Acadêmica Z-Score)")
@@ -407,6 +416,15 @@ class MetricsMultiHorizon:
                     self.process_dataset(ds_name, info)
             except Exception as e:
                 print(f"   ❌ Erro ao processar o dataset {ds_name}: {e}")
+
+        if self.protocol == "rolling":
+            try:
+                from src.metrics.statistical_tests import run_friedman
+
+                print("\n📐 Friedman + Iman-Davenport (todos os datasets com métricas rolling)")
+                run_friedman(self.metrics_dir)
+            except Exception as e:
+                print(f"   ⚠️ Friedman não executado: {e}")
 
         print("\n✅ Avaliação concluída!\n" + "=" * 80)
 

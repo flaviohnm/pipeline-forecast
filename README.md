@@ -122,7 +122,19 @@ No `rolling`, cada modelo grava `{dataset}_{modelo}_rolling.csv` (formato longo:
 - **Híbrido Prophet + N-HiTS:** N-HiTS treinado uma vez nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados.
 - **Ingênuos (último valor e sazonal):** calculados na própria avaliação, nos dois protocolos.
 
-Recomendado para a dissertação: `protocol: "rolling"` com `norm_stats: "train"`.
+Recomendado para a dissertação: `protocol: "rolling"` com `norm_stats: "train"` (já é o padrão do `main_config.yaml`).
+
+### Testes estatísticos
+
+Rodar a etapa 9 (avaliação) no protocolo `rolling` também gera, em `results/metrics/`:
+
+| Arquivo | Conteúdo |
+| --- | --- |
+| `{dataset}_dm_tests.csv` | Diebold-Mariano com correção de Harvey-Leybourne-Newbold, par a par, por horizonte e métrica (MSE e MAE), com p-valor ajustado por Holm. A perda de cada janela é comparada; janelas sobrepostas entram como autocorrelação (`lags = ceil(h/passo) - 1`). `diferenca_media = perda(A) - perda(B)`; positiva significa que A errou mais. |
+| `friedman_summary.csv`, `friedman_ranks.csv`, `friedman_posthoc.csv` | Friedman + Iman-Davenport, ranks médios, diferença crítica de Nemenyi e pós-teste de Holm. Com **um único dataset**, os blocos são as janelas (dependentes) e o resultado é só exploratório; com vários datasets, o bloco é o dataset (Demšar recomenda N > 10). |
+
+O módulo é `src/metrics/statistical_tests.py` e pode ser rodado isoladamente (`python src/metrics/statistical_tests.py`) para refazer só o Friedman. Referências: Ben Taieb et al. (2012), Demšar (2006), García & Herrera (2009), Diebold & Mariano (1995), Harvey, Leybourne & Newbold (1997).
+
 
 ---
 
@@ -194,7 +206,7 @@ No pipeline completo (opção 1), a falha de uma etapa **não interrompe** as de
 poetry run pytest -q
 ```
 
-Testes com dados sintéticos para métricas, normalização, baselines ingênuos e alinhamento/ausência de vazamento do protocolo `rolling` (inclui treinos reduzidos de statsforecast, Prophet e NeuralForecast; cerca de 3 minutos).
+Testes com dados sintéticos para métricas, normalização, baselines ingênuos, testes estatísticos (Diebold-Mariano, Friedman, Holm, Nemenyi) e alinhamento/ausência de vazamento do protocolo `rolling` (inclui treinos reduzidos de statsforecast, Prophet e NeuralForecast; cerca de 3 minutos).
 
 ---
 
