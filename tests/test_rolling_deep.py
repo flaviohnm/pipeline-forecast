@@ -7,6 +7,7 @@ import pytest
 from neuralforecast.models import MLP, NHITS
 
 from src.models.deep_baselines import DLBaselinesTrainer, fit_predict_rolling
+from src.models.deep_profile import load_deep_config
 from src.utils.general import get_rolling_origins
 
 warnings.filterwarnings("ignore")
@@ -91,9 +92,9 @@ def test_fit_predict_rolling_rejects_short_history(df):
 
 def test_build_models_shared_definitions():
     trainer = DLBaselinesTrainer.__new__(DLBaselinesTrainer)
-    trainer.config = {"random_seed": 42}
-    models = trainer.build_models(horizon=720, input_size=1440)
+    trainer.config = {"random_seed": 42, "compute": {"accelerator": "cpu"}}
+    trainer.deep_cfg = load_deep_config(trainer.config)
+    models = trainer.build_models(horizon=720)
     assert list(models) == ["MLP", "LSTM", "NHITS", "Informer"]
     assert all(m.h == 720 for m in models.values())
-    assert models["MLP"].input_size == 1440
-    assert models["Informer"].input_size == 720  # Informer mantém input_size = horizonte
+    assert all(m.input_size == 336 for m in models.values())  # lookback único para todas as redes

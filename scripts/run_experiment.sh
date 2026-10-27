@@ -190,6 +190,7 @@ executar_opcao() {
         8) run_and_time "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py" ;;
         9) run_and_time "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py" ;;
         10) run_and_time "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" ;;
+        11) run_and_time "Diagnostico_GPU_CPU" "poetry run python src/utils/compute.py" ;;
         *)
             echo "❌ Opção inválida."
             return 1
@@ -245,6 +246,7 @@ while true; do
     echo "  [8]  🤖 Passo 7: Deep Learning Baselines Puras (MLP, LSTM...)"
     echo "  [9]  📊 Passo 8: Avaliar Métricas (Benchmarking)"
     echo "  [10] 🎨 Passo 9: Gerar Gráficos e Visualizações"
+    echo "  [11] 🖥️  Diagnóstico: GPU ou CPU? (dispositivo que as redes vão usar)"
     echo "----------------------------------------------------------------------"
     echo "  [S/s] Sair do Orquestrador"
     echo ""

@@ -4,31 +4,72 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+import numpy as np
 from neuralforecast import NeuralForecast
-from neuralforecast.models import NHITS
 
 # Define a raiz do projeto e o sys.path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
-from src.models.deep_baselines import fit_predict_rolling
-from src.utils.general import get_datasets, get_protocol, prepare_data
+from src.models.deep_baselines import fit_predict_rolling, free_memory
+from src.models.deep_profile import build_nhits, load_deep_config, model_horizons
+from src.utils.compute import describe_compute
+from src.utils.general import get_datasets, get_protocol, get_rolling_origins, prepare_data
 
 warnings.filterwarnings("ignore")
 
 
-def build_nhits(horizon, input_size, random_seed):
-    """N-HiTS sobre os resíduos do ARIMA (mesma definição nos protocolos single_split e rolling)."""
-    return NHITS(
-        h=horizon,
-        input_size=input_size,
-        max_steps=400,  # Limite de épocas (ciclos de treino)
-        batch_size=32,
-        accelerator="cpu",
-        early_stop_patience_steps=3,  # Para o treino se parar de melhorar
-        random_seed=random_seed,
+def residual_check(nf, df_res, info, input_size, h, ljung_lag=None):
+    """
+    Checagem do N-HiTS dos resíduos no bloco de VALIDAÇÃO (nunca no teste).
+    Pergunta: o N-HiTS prevê o resíduo futuro melhor que a previsão "zero" (que equivale ao ARIMA puro)?
+    `skill = 1 - MSE(N-HiTS) / MSE(zero)`: > 0 há ganho, <= 0 o N-HiTS não acrescenta nada ao ARIMA.
+    Também reporta a correlação entre o resíduo previsto e o real, a razão de desvios-padrão e o p-valor de
+    Ljung-Box dos resíduos de treino (p alto = ruído branco: não há estrutura para a rede aprender).
+    Retorna um dict (uma linha de {dataset}_residual_check.csv).
+    """
+    df = df_res.sort_values("ds").reset_index(drop=True)
+    train_end = info["train_size"]
+    val_end = train_end + info["rolling"]["val_size"]
+    step = info["rolling"]["step_size"]
+
+    preds, trues = [], []
+    for start in range(train_end, val_end - h + 1, step):
+        if start < input_size:
+            continue
+        context = df.iloc[start - input_size : start]
+        future = nf.predict(df=context).reset_index().sort_values("ds")
+        true = df["y"].iloc[start : start + h].to_numpy()
+        if len(future) != h or len(true) != h or np.isnan(true).any():
+            continue
+        preds.append(future["NHITS"].to_numpy())
+        trues.append(true)
+
+    row = {"H": h, "janelas_validacao": len(preds)}
+    if not preds:
+        row.update(skill=np.nan, correlacao=np.nan, razao_desvio=np.nan, ljung_box_p=np.nan)
+        return row
+
+    pred, true = np.concatenate(preds), np.concatenate(trues)
+    mse_model, mse_zero = float(np.mean((pred - true) ** 2)), float(np.mean(true**2))
+    row.update(
+        mse_nhits=mse_model,
+        mse_zero=mse_zero,
+        skill=1.0 - mse_model / mse_zero,
+        correlacao=float(np.corrcoef(pred, true)[0, 1]) if pred.std() > 0 and true.std() > 0 else np.nan,
+        razao_desvio=float(pred.std() / true.std()) if true.std() > 0 else np.nan,
     )
+
+    lag = ljung_lag or info.get("seasonal_period", 24)
+    try:
+        from statsmodels.stats.diagnostic import acorr_ljungbox
+
+        resid = df["y"].iloc[:train_end].dropna().to_numpy()
+        row["ljung_box_p"] = float(acorr_ljungbox(resid, lags=[lag])["lb_pvalue"].iloc[0])
+    except Exception:
+        row["ljung_box_p"] = np.nan
+    return row
 
 
 def residuals_on_full_dates(df_res, df_full):
@@ -49,7 +90,10 @@ class HybridNHITSTrainer:
 
         self.resid_dir = BASE_DIR / self.config["results_paths"]["residuals"]
         self.resid_dir.mkdir(parents=True, exist_ok=True)
+        self.metrics_dir = BASE_DIR / self.config["results_paths"]["metrics"]
+        self.metrics_dir.mkdir(parents=True, exist_ok=True)
         self.protocol = get_protocol(self.config)
+        self.deep_cfg = load_deep_config(self.config)
 
     def run_rolling(self, name, info):
         """Treina o N-HiTS uma vez nos resíduos de treino+val e prevê o resíduo em cada origem do teste."""
@@ -62,19 +106,51 @@ class HybridNHITSTrainer:
         df_full = prepare_data(pd.read_csv(BASE_DIR / info["path"]), info, name)
         df_res = residuals_on_full_dates(df_res, df_full)
 
-        horizon = info["max_horizon"]
-        input_size = horizon * 2
-        print(f"   > Rolling: treino em treino+val, contexto de {input_size} resíduos por origem")
-
-        model = build_nhits(horizon, input_size, self.config["random_seed"])
-        forecasts = fit_predict_rolling("NHITS", model, df_res, info, input_size)
+        horizons = model_horizons(info, self.deep_cfg)
+        input_size = int(self.deep_cfg["input_size"])
+        print(
+            f"   > Rolling: estratégia {self.deep_cfg['strategy']}, H = {horizons}; treino em treino+val, "
+            f"contexto de {input_size} resíduos por origem"
+        )
 
         out_file = self.resid_dir / f"{name}_nhits_residuals_rolling.csv"
-        forecasts.to_csv(out_file, index=False)
+        per_h, checks = [], []
+        for h in horizons:
+            model = build_nhits(h, self.config, input_size)
+            print(f"\n🚀 N-HiTS dos resíduos (rolling) H={h}...")
+            forecasts = fit_predict_rolling(
+                "NHITS",
+                model,
+                df_res,
+                info,
+                input_size,
+                horizon=h,
+                on_fitted=lambda nf, h=h: checks.append(residual_check(nf, df_res, info, input_size, h)),
+            )
+            forecasts.insert(1, "H", h)
+            per_h.append(forecasts)
+            pd.concat(per_h, ignore_index=True).to_csv(out_file, index=False)
+            del model
+            free_memory()
         print(f"✅ Previsões rolling do N-HiTS salvas em: {self.resid_dir.name}/{out_file.name}")
+
+        df_check = pd.DataFrame(checks)
+        check_file = self.metrics_dir / f"{name}_residual_check.csv"
+        df_check.round(6).to_csv(check_file, index=False)
+        print(f"\n🔎 Checagem do N-HiTS nos resíduos (bloco de validação) -> {check_file.name}")
+        print(df_check.round(4).to_string(index=False))
+        for row in checks:
+            if not np.isfinite(row.get("skill", np.nan)):
+                print(f"   ⚠️ Checagem N-HiTS/resíduos H={row['H']}: sem janelas de validação suficientes.")
+            elif row["skill"] <= 0:
+                print(
+                    f"   ⚠️ Checagem N-HiTS/resíduos H={row['H']}: sem ganho sobre prever resíduo zero "
+                    f"(skill={row['skill']:+.3f}); o híbrido tende a empatar com o ARIMA."
+                )
 
     def run(self):
         print("\n🧠 [PASSO 4] Iniciando Janelamento e Treino do N-HiTS sobre os Resíduos")
+        print(describe_compute(self.config))
 
         # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
         datasets_to_run = get_datasets()
@@ -105,7 +181,7 @@ class HybridNHITSTrainer:
 
             # O horizonte de previsão máximo já vem do general.py
             horizon = info["max_horizon"]
-            input_size = horizon * 2
+            input_size = int(self.deep_cfg["input_size"])
 
             # =======================================================
             # TRAVA DE SEGURANÇA: Compatibilidade de Janela PyTorch
@@ -121,7 +197,7 @@ class HybridNHITSTrainer:
             print(f"   > Validation Size (Protegido): {safe_val_size} pontos")
 
             # 4. Configura a Rede Neural N-HiTS
-            models = [build_nhits(horizon, input_size, self.config["random_seed"])]
+            models = [build_nhits(horizon, self.config, input_size)]
 
             # 5. Inicializa o motor da Nixtla
             nf = NeuralForecast(models=models, freq=info["freq"])
