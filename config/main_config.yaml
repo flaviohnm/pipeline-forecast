@@ -35,3 +35,40 @@ evaluation:
   #   rolling      -> várias origens no bloco de teste ("rolling" de cada dataset em general.py);
   #                   gera {dataset}_evaluation_rolling.csv (média ± desvio) e _rolling_windows.csv
   protocol: "rolling"
+
+# Hardware (src/utils/compute.py)
+compute:
+  # auto -> usa a GPU CUDA se o PyTorch enxergar uma; senão, CPU (padrão)
+  # cpu  -> força CPU (reproduz a execução de uma máquina sem GPU)
+  # gpu  -> exige GPU; se não houver, cai para CPU com aviso
+  accelerator: "auto"
+  devices: 1  # nº de GPUs usadas quando houver GPU
+
+# Redes neurais: MLP, LSTM, N-HiTS, Informer e o N-HiTS dos híbridos (src/models/deep_profile.py)
+deep_learning:
+  # per_horizon      -> um modelo por comprimento de previsão H (24, 48, 168, 336, 720), como Informer/PatchTST/DLinear
+  # single_truncated -> um único modelo com H = max_horizon, truncado nos horizontes menores (comportamento antigo)
+  strategy: "per_horizon"
+  input_size: 336  # lookback em passos (PatchTST/DLinear: 336; Informer escolhe entre 24 e 720 por validação)
+  common:
+    loss: "mse"  # mse | mae (Informer, PatchTST e DLinear treinam com MSE)
+    scaler_type: "standard"  # z-score por janela de entrada, aplicado e revertido pelo NeuralForecast
+    max_steps: 1000  # padrão do NeuralForecast para MLP e N-HiTS
+    val_check_steps: 100
+    early_stop_patience_steps: 5  # nº de validações sem melhora (5 x 100 = 500 passos)
+  models:  # sobrescreve `common` por modelo; omitir um parâmetro mantém o padrão do NeuralForecast 1.7.7
+    MLP: {}
+    LSTM:
+      encoder_hidden_size: 64  # LSTMa/DeepAR do Informer buscam em {32, 64, 128, 256}
+    NHITS:
+      learning_rate: 0.001  # padrão do artigo e do NeuralForecast
+    Informer:  # Zhou et al. (2021): d_model 512, 8 cabeças, 3+2 camadas, fator 5, dropout 0.1, lr 1e-4, lote de 32
+      learning_rate: 0.0001
+      hidden_size: 512
+      n_head: 8
+      encoder_layers: 3
+      decoder_layers: 2
+      factor: 5
+      dropout: 0.1
+      windows_batch_size: 32
+      max_steps: 2000

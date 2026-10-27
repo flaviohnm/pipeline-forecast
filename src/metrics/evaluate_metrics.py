@@ -11,6 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
+from src.models.deep_profile import pick_model_horizon
 from src.utils.general import get_datasets, get_protocol, get_rolling_origins
 
 warnings.filterwarnings("ignore")
@@ -175,7 +176,12 @@ def evaluate_rolling(df_eval, horizons, model_columns, norm_mean, norm_std):
                 rows.append({"cutoff": cutoff, "Horizonte": h, "Modelo": model_name, "MSE": mse, "MAE": mae})
 
     df_windows = pd.DataFrame(rows, columns=["cutoff", "Horizonte", "Modelo", "MSE", "MAE"])
-    df_summary = (
+    return df_windows, summarize_windows(df_windows)
+
+
+def summarize_windows(df_windows):
+    """Média e desvio-padrão do erro entre janelas, por horizonte e modelo."""
+    return (
         df_windows.groupby(["Horizonte", "Modelo"], sort=False)
         .agg(
             MSE_mean=("MSE", "mean"),
@@ -186,7 +192,6 @@ def evaluate_rolling(df_eval, horizons, model_columns, norm_mean, norm_std):
         )
         .reset_index()
     )
-    return df_windows, df_summary
 
 
 class MetricsMultiHorizon:
@@ -333,7 +338,11 @@ class MetricsMultiHorizon:
         df_preds = pd.concat(naive_frames, ignore_index=True)
 
         # 2. Previsões rolling dos modelos (geradas pelos scripts de treino com protocol=rolling)
+        # Arquivos SEM coluna H têm um único modelo por janela (ARIMA, ETS, Prophet): entram direto.
+        # Arquivos COM coluna H (redes e híbridos: um modelo por comprimento de previsão) ficam em
+        # per_h_sources e, em cada horizonte h, usa-se o modelo treinado para ele (ver passo 5).
         model_cols = set(MODEL_COLUMNS.values())
+        per_h_sources = []
         for dir_key, suffix in ROLLING_SOURCES.items():
             rolling_file = BASE_DIR / self.config["results_paths"][dir_key] / f"{current_dataset}_{suffix}_rolling.csv"
             if not rolling_file.exists():
@@ -343,11 +352,16 @@ class MetricsMultiHorizon:
                 df_m = df_m.rename(columns={"NHITS": "NHITS_Standalone", "Informer": "Informer_Standalone"})
             # Só as colunas de modelo ainda não carregadas (ex.: o arquivo do híbrido também traz o ARIMA)
             keep = [c for c in df_m.columns if c in model_cols and c not in df_preds.columns]
-            df_preds = pd.merge(df_preds, df_m[["cutoff", "ds"] + keep], on=["cutoff", "ds"], how="left")
             # Data do arquivo ajuda a notar previsões antigas (ex.: etapa que falhou nesta execução)
             modified = pd.Timestamp(rolling_file.stat().st_mtime, unit="s", tz="UTC").tz_convert(None)
+            if "H" in df_m.columns:
+                per_h_sources.append((df_m, keep))
+                label = f"modelos por H = {sorted(df_m['H'].unique())}"
+            else:
+                df_preds = pd.merge(df_preds, df_m[["cutoff", "ds"] + keep], on=["cutoff", "ds"], how="left")
+                label = "modelo único"
             print(
-                f"   > Carregado: {rolling_file.name} ({', '.join(keep) or 'nenhuma coluna nova'}) "
+                f"   > Carregado: {rolling_file.name} ({', '.join(keep) or 'nenhuma coluna nova'}; {label}) "
                 f"| gerado em {modified:%Y-%m-%d %H:%M} UTC"
             )
 
@@ -362,12 +376,26 @@ class MetricsMultiHorizon:
         print(f"   > Normalização: {self.norm_stats} (média={norm_mean:.3f}, desvio={norm_std:.3f})")
 
         model_columns = MODEL_COLUMNS
-        check_model_columns(df_eval, model_columns)
-        check_bias(df_eval, model_columns, reference_std=norm_std)
 
-        # 5. Métricas por janela e resumo
+        # 5. Métricas por janela e resumo. Em cada horizonte h, as colunas de rede/híbrido vêm do modelo
+        #    treinado para ele (H = h em per_horizon; em single_truncated, o H maior que cobre h).
         horizons = info.get("forecast_horizon", [96, 192, 336, 720])
-        df_windows, df_summary = evaluate_rolling(df_eval, horizons, model_columns, norm_mean, norm_std)
+        window_frames, frame_for_checks = [], None
+        for h in horizons:
+            df_h = df_eval
+            for df_m, keep in per_h_sources:
+                used = pick_model_horizon(df_m["H"].unique(), h)
+                sub = df_m.loc[df_m["H"] == used, ["cutoff", "ds"] + keep]
+                df_h = pd.merge(df_h, sub, on=["cutoff", "ds"], how="left")
+            w, _ = evaluate_rolling(df_h, [h], model_columns, norm_mean, norm_std)
+            window_frames.append(w)
+            if frame_for_checks is None or h >= frame_for_checks[0]:
+                frame_for_checks = (h, df_h)
+
+        check_model_columns(frame_for_checks[1], model_columns)
+        check_bias(frame_for_checks[1], model_columns, reference_std=norm_std)
+        df_windows = pd.concat(window_frames, ignore_index=True)
+        df_summary = summarize_windows(df_windows)
 
         incomplete = df_summary.loc[df_summary["n_janelas"] < len(origins), "Modelo"].unique()
         if len(incomplete):

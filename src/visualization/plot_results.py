@@ -187,6 +187,11 @@ class ResultsPlotter:
             return
 
         df_preds = pd.read_csv(preds_file, parse_dates=["cutoff", "ds"])
+        if "H" in df_preds.columns:
+            # Híbrido por comprimento de previsão: usa o modelo treinado para o zoom (ou o menor H que o cobre)
+            available = sorted(df_preds["H"].unique())
+            used_h = next((h for h in available if h >= zoom_horizon), available[-1])
+            df_preds = df_preds[df_preds["H"] == used_h]
         cutoffs = sorted(df_preds["cutoff"].unique())
         cutoff = cutoffs[window]
         df_win = df_preds[df_preds["cutoff"] == cutoff].sort_values("ds")

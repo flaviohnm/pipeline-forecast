@@ -56,13 +56,13 @@ Para garantir a reprodutibilidade dos experimentos, recomenda-se:
 ## 1. Conceda permissão aos scripts
 
 ```bash
-chmod +x setup_venv.sh run_experiment.sh
+chmod +x scripts/setup_venv.sh scripts/run_experiment.sh
 ```
 
 ## 2. Crie o ambiente virtual
 
 ```bash
-./setup_venv.sh
+./scripts/setup_venv.sh
 ```
 
 O script realiza automaticamente:
@@ -119,12 +119,44 @@ No `rolling`, cada modelo grava `{dataset}_{modelo}_rolling.csv` (formato longo:
 
 - **ARIMA / ETS:** ajuste único em treino+val; nas demais origens os parâmetros ficam fixos e só o estado é atualizado.
 - **Prophet:** reajustado em cada origem com os dados até o cutoff.
-- **Redes (MLP, LSTM, N-HiTS, Informer):** treino único em treino+val, early stopping no bloco de validação; cada origem é prevista a partir do contexto anterior ao cutoff.
-- **Híbrido ARIMA + N-HiTS:** resíduos de 1 passo do ARIMA com parâmetros fixos; N-HiTS treinado uma vez nos resíduos de treino+val.
-- **Híbrido Prophet + N-HiTS:** N-HiTS treinado uma vez nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados.
+- **Redes (MLP, LSTM, N-HiTS, Informer):** um modelo MIMO por comprimento de previsão H (24, 48, 168, 336, 720), cada um treinado uma vez em treino+val com early stopping no bloco de validação; cada origem é prevista a partir do contexto anterior ao cutoff. Saída com coluna `H`.
+- **Híbrido ARIMA + N-HiTS:** resíduos de 1 passo do ARIMA com parâmetros fixos; um N-HiTS por H treinado nos resíduos de treino+val. Antes do teste, `results/metrics/{dataset}_residual_check.csv` mede (no bloco de validação) se o N-HiTS prevê o resíduo melhor que "zero" (`skill > 0`); `skill <= 0` gera alerta ⚠️, pois o híbrido tende a empatar com o ARIMA.
+- **Híbrido Prophet + N-HiTS:** um N-HiTS por H treinado nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados.
 - **Ingênuos (último valor e sazonal):** calculados na própria avaliação, nos dois protocolos.
 
 Recomendado para a dissertação: `protocol: "rolling"` com `norm_stats: "train"` (já é o padrão do `main_config.yaml`).
+
+### Redes neurais: hiperparâmetros e estratégia por horizonte
+
+As seções `deep_learning` e `compute` de `config/main_config.yaml` controlam todas as redes (e o N-HiTS dos híbridos):
+
+```yaml
+compute:
+  accelerator: "auto"      # auto | cpu | gpu
+  devices: 1
+deep_learning:
+  strategy: "per_horizon"  # per_horizon | single_truncated
+  input_size: 336          # lookback único (como PatchTST/DLinear no ETTh1)
+  common: {loss: "mse", scaler_type: "standard", max_steps: 1000, val_check_steps: 100, early_stop_patience_steps: 5}
+  models: {MLP: {}, LSTM: {...}, NHITS: {...}, Informer: {...}}   # sobrescritas por modelo
+```
+
+- `per_horizon` (padrão): uma rede MIMO por H, como Informer, PatchTST e DLinear. **Não** é a estratégia Direct de Ben Taieb et al. (2012), que treina um modelo por passo. `single_truncated`: uma única rede com H = `max_horizon`, usando os primeiros h passos (comportamento anterior).
+- Valores padrão e origem de cada um (Informer: d_model 512, 8 cabeças, lr 1e-4; N-HiTS: lr 1e-3; perda MSE) estão comentados em `src/models/deep_profile.py`.
+- Treinar uma rede por H aumenta o custo: cinco horizontes × quatro redes (mais os N-HiTS dos híbridos).
+
+## GPU (Ubuntu) ou CPU
+
+O mesmo código roda em máquinas com e sem GPU. Com `compute.accelerator: "auto"` as redes usam a GPU CUDA quando o PyTorch a enxerga e a CPU caso contrário; `cpu` força CPU e `gpu` exige GPU (sem ela, cai para CPU com aviso ⚠️). O dispositivo escolhido é impresso no início de cada treino.
+
+Checklist para Ubuntu com GPU NVIDIA:
+
+1. `nvidia-smi` deve funcionar. O `poetry.lock` fixa PyTorch 2.12 com CUDA 13, que em geral exige driver NVIDIA recente (580 ou superior); com driver mais antigo o pipeline roda, mas na CPU.
+2. `chmod +x scripts/*.sh && ./scripts/setup_venv.sh` (ou `poetry install`).
+3. No menu de `scripts/run_experiment.sh`, a opção **11** mostra qual dispositivo será usado e o motivo (equivale a `poetry run python src/utils/compute.py`).
+4. Statsforecast (ARIMA, ETS), Prophet e as métricas continuam na CPU.
+
+Os resultados em GPU e CPU não são idênticos bit a bit (operações CUDA não determinísticas); registre o dispositivo usado junto dos resultados.
 
 ### Testes estatísticos
 
@@ -145,7 +177,7 @@ O módulo é `src/metrics/statistical_tests.py` e pode ser rodado isoladamente (
 Execute o orquestrador:
 
 ```bash
-./run_experiment.sh
+./scripts/run_experiment.sh
 ```
 
 Será exibido o seguinte menu:
@@ -192,7 +224,7 @@ Escolha a etapa do experimento:
 Para rodar uma etapa direto, sem menu — útil junto com `nohup`, `tmux` ou `screen` em treinos longos:
 
 ```bash
-bash run_experiment.sh 1   # roda o pipeline completo e sai, sem esperar ENTER
+bash scripts/run_experiment.sh 1   # roda o pipeline completo e sai, sem esperar ENTER
 ```
 
 Cada execução gera automaticamente:
@@ -253,8 +285,9 @@ pipeline-forecast/
 ├── .gitignore
 ├── poetry.lock
 ├── pyproject.toml
-├── run_experiment.sh
-└── setup_venv.sh
+└── scripts/
+    ├── run_experiment.sh
+    └── setup_venv.sh
 ```
 
 ---

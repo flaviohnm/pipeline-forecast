@@ -10,7 +10,7 @@ from src.models.arima_baseline import arima_rolling
 from src.models.deep_baselines import fit_predict_rolling
 from src.models.hybrid_combiner import combine_rolling
 from src.models.hybrid_prophet_nhits import hybrid_prophet_rolling
-from src.models.nhits_residual import residuals_on_full_dates
+from src.models.nhits_residual import residual_check, residuals_on_full_dates
 from src.models.prophet_baseline import prophet_rolling
 from src.utils.general import get_rolling_origins
 from src.visualization.plot_results import ResultsPlotter
@@ -132,6 +132,51 @@ def test_combine_rolling_rejects_misaligned_windows():
         combine_rolling(_long(cutoffs, 4, "ARIMA", 1.0), _long(cutoffs[:2], 4, "NHITS", 1.0))
 
 
+def _long_h(cutoffs, h_list, col, value):
+    frames = []
+    for h in h_list:
+        f = _long(cutoffs, h, col, value)
+        f.insert(1, "H", h)
+        frames.append(f)
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_combine_rolling_per_horizon_uses_first_h_steps_of_arima():
+    cutoffs = list(pd.date_range("2021-01-01", periods=3, freq="D"))
+    arima = _long(cutoffs, 8, "ARIMA", 10.0)  # ARIMA cobre o maior H
+    nhits = _long_h(cutoffs, [4, 8], "NHITS", -1.0)
+    out = combine_rolling(arima, nhits)
+    assert list(out.columns) == ["unique_id", "H", "cutoff", "ds", "ARIMA", "NHITS", "Hybrid_ARIMA_NHITS"]
+    assert len(out) == 3 * (4 + 8)
+    assert (out["Hybrid_ARIMA_NHITS"] == 9.0).all()
+    assert out.groupby(["H", "cutoff"]).size().eq(out.groupby(["H", "cutoff"])["H"].first()).all()
+
+
+def test_combine_rolling_per_horizon_rejects_missing_arima_windows():
+    cutoffs = list(pd.date_range("2021-01-01", periods=3, freq="D"))
+    with pytest.raises(ValueError, match="desalinhadas"):
+        combine_rolling(_long(cutoffs[:2], 8, "ARIMA", 1.0), _long_h(cutoffs, [4], "NHITS", 1.0))
+
+
+# --- Checagem do N-HiTS nos resíduos ------------------------------------------
+
+
+def test_residual_check_reports_skill_on_validation_block(df, origins):
+    _, residuals = arima_rolling(df, INFO, n_jobs=1)
+    full = residuals_on_full_dates(residuals, df)
+    h = 24
+    model = NHITS(h=h, input_size=96, max_steps=5, random_seed=1, **QUIET)
+    captured = []
+    fit_predict_rolling(
+        "NHITS", model, full, INFO, input_size=96, horizon=h,
+        on_fitted=lambda nf: captured.append(residual_check(nf, full, INFO, 96, h)),
+    )
+    row = captured[0]
+    assert row["H"] == h and row["janelas_validacao"] >= 1
+    assert np.isfinite(row["skill"]) and row["skill"] <= 1.0
+    assert row["mse_zero"] > 0
+
+
 # --- Prophet ------------------------------------------------------------------
 
 
@@ -151,7 +196,7 @@ def test_prophet_rolling_alignment_and_no_leakage(df, origins):
 
 def test_hybrid_prophet_rolling(df, origins):
     model = NHITS(h=H, input_size=96, max_steps=5, scaler_type="standard", random_seed=1, **QUIET)
-    out = hybrid_prophet_rolling(df, INFO, model, input_size=96)
+    out = hybrid_prophet_rolling(df, INFO, model, input_size=96)  # modelo único: formato legado, sem coluna H
     assert list(out.columns) == [
         "unique_id", "cutoff", "ds", "Prophet_component", "NHITS_component", "Hybrid_Prophet_NHITS"
     ]
@@ -160,6 +205,18 @@ def test_hybrid_prophet_rolling(df, origins):
     # O componente Prophet é o mesmo procedimento do baseline (reajuste em cada origem)
     baseline = prophet_rolling(df, INFO)
     np.testing.assert_allclose(out["Prophet_component"], baseline["Prophet"], rtol=1e-4)
+
+
+def test_hybrid_prophet_rolling_per_horizon(df, origins):
+    models = {
+        h: NHITS(h=h, input_size=96, max_steps=5, scaler_type="standard", random_seed=1, **QUIET) for h in (24, H)
+    }
+    out = hybrid_prophet_rolling(df, INFO, models, input_size=96)
+    assert list(out.columns)[:2] == ["unique_id", "H"]
+    for h in (24, H):
+        sub = out[out["H"] == h]
+        assert len(sub) == len(origins) * h
+    np.testing.assert_allclose(out["Hybrid_Prophet_NHITS"], out["Prophet_component"] + out["NHITS_component"])
 
 
 # --- Gráficos do protocolo rolling --------------------------------------------

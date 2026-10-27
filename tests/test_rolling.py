@@ -172,3 +172,31 @@ def test_process_dataset_rolling_naive_only(rolling_setup):
     summary = pd.read_csv(tmp_path / "metrics" / "SYN_evaluation_rolling.csv")
     assert set(summary["Modelo"]) == {"Ingênuo (último valor)", "Ingênuo Sazonal"}
     assert (summary["n_janelas"] == len(origins)).all()
+
+
+def test_process_dataset_rolling_per_horizon_files(rolling_setup):
+    """Arquivos com coluna H: cada horizonte avaliado usa o modelo treinado para ele."""
+    evaluator, info, origins, tmp_path = rolling_setup
+    ds = pd.read_csv(info["path"], parse_dates=["date"])
+    actual = pd.DataFrame({"ds": ds["date"], "y": ds["OT"]})
+
+    def per_h(error_by_h):
+        frames = []
+        for h, err in error_by_h.items():
+            for start in origins:
+                w = actual.iloc[start : start + h].copy()
+                w.insert(0, "cutoff", actual["ds"].iloc[start - 1])
+                w.insert(0, "H", h)
+                w["NHITS"] = w["y"] + err
+                frames.append(w.drop(columns="y"))
+        return pd.concat(frames, ignore_index=True).assign(unique_id="SYN")
+
+    # H=24 erra por 1, H=48 erra por 3: se o merge pegasse o modelo errado, os MAEs trocariam
+    per_h({24: 1.0, 48: 3.0}).to_csv(tmp_path / "deep_learning" / "SYN_deep_rolling.csv", index=False)
+    evaluator.process_dataset_rolling("SYN", info)
+
+    summary = pd.read_csv(tmp_path / "metrics" / "SYN_evaluation_rolling.csv").set_index(["Horizonte", "Modelo"])
+    std_train = pd.read_csv(info["path"])["OT"].iloc[:240].std()
+    assert summary.loc[(24, "N-HiTS"), "MAE_mean"] == pytest.approx(1 / std_train, abs=1e-4)
+    assert summary.loc[(48, "N-HiTS"), "MAE_mean"] == pytest.approx(3 / std_train, abs=1e-4)
+    assert summary.loc[(24, "N-HiTS"), "n_janelas"] == len(origins)

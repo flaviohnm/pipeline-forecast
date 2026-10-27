@@ -17,19 +17,36 @@ from src.utils.general import get_datasets, get_protocol
 def combine_rolling(df_arima, df_nhits):
     """
     Y_final = ARIMA + N-HiTS(resíduo) para cada (cutoff, ds) do protocolo rolling.
-    Falha se as duas previsões não cobrirem exatamente as mesmas janelas e datas.
+    Se df_nhits tem a coluna H (um N-HiTS por comprimento de previsão), o resultado também tem H:
+    para cada H, o N-HiTS de H passos é somado às H primeiras previsões do ARIMA da janela.
+    Falha se as previsões não cobrirem exatamente as mesmas janelas e datas.
     """
     keys = ["cutoff", "ds"]
-    df_final = pd.merge(
-        df_arima[["unique_id"] + keys + ["ARIMA"]], df_nhits[keys + ["NHITS"]], on=keys, how="inner"
-    )
-    if not (len(df_final) == len(df_arima) == len(df_nhits)):
-        raise ValueError(
-            f"Previsões rolling desalinhadas: ARIMA={len(df_arima)} linhas, N-HiTS={len(df_nhits)}, "
-            f"em comum={len(df_final)}. Rode ARIMA e N-HiTS (resíduos) com o mesmo protocolo."
+    if "H" not in df_nhits.columns:
+        df_final = pd.merge(
+            df_arima[["unique_id"] + keys + ["ARIMA"]], df_nhits[keys + ["NHITS"]], on=keys, how="inner"
         )
+        if not (len(df_final) == len(df_arima) == len(df_nhits)):
+            raise ValueError(
+                f"Previsões rolling desalinhadas: ARIMA={len(df_arima)} linhas, N-HiTS={len(df_nhits)}, "
+                f"em comum={len(df_final)}. Rode ARIMA e N-HiTS (resíduos) com o mesmo protocolo."
+            )
+        df_final["Hybrid_ARIMA_NHITS"] = df_final["ARIMA"] + df_final["NHITS"]
+        return df_final.sort_values(keys).reset_index(drop=True)
+
+    arima = df_arima[["unique_id"] + keys + ["ARIMA"]]
+    df_final = pd.merge(df_nhits[["H"] + keys + ["NHITS"]], arima, on=keys, how="left")
+    if df_final["ARIMA"].isna().any() or set(df_nhits["cutoff"]) != set(df_arima["cutoff"]):
+        raise ValueError(
+            "Previsões rolling desalinhadas: o ARIMA não cobre todas as janelas/datas do N-HiTS. "
+            "Rode ARIMA e N-HiTS (resíduos) com o mesmo protocolo."
+        )
+    counts = df_final.groupby(["H", "cutoff"]).size().reset_index(name="n")
+    if (counts["n"] != counts["H"]).any():
+        raise ValueError("Alguma janela do N-HiTS não tem exatamente H previsões.")
     df_final["Hybrid_ARIMA_NHITS"] = df_final["ARIMA"] + df_final["NHITS"]
-    return df_final.sort_values(keys).reset_index(drop=True)
+    cols = ["unique_id", "H", "cutoff", "ds", "ARIMA", "NHITS", "Hybrid_ARIMA_NHITS"]
+    return df_final[cols].sort_values(["H", "cutoff", "ds"]).reset_index(drop=True)
 
 
 class HybridCombiner:
