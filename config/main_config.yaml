@@ -29,9 +29,9 @@ evaluation:
   # Estatísticas (média/desvio) da normalização z-score usada nas métricas:
   #   global -> série inteira, incluindo o período de teste (comportamento original)
   #   train  -> só o bloco de treino ("train_size" de cada dataset em general.py), sem vazamento do teste
-  norm_stats: "global"
+  norm_stats: "train"
   # Protocolo de avaliação:
   #   single_split -> uma janela: os últimos max_horizon pontos da série (comportamento original)
   #   rolling      -> várias origens no bloco de teste ("rolling" de cada dataset em general.py);
   #                   gera {dataset}_evaluation_rolling.csv (média ± desvio) e _rolling_windows.csv
-  protocol: "single_split"
+  protocol: "rolling"
