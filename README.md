@@ -1,6 +1,8 @@
 # 🚀 Pipeline MLOps para Time Series Forecasting (Híbrido)
 
-Este repositório contém o código-fonte e o pipeline MLOps desenvolvido para avaliar modelos estatísticos, de **Deep Learning** e arquiteturas híbridas na previsão de séries temporais multivariadas (*Time Series Forecasting*).
+Este repositório contém o código-fonte e o pipeline MLOps desenvolvido para avaliar modelos estatísticos, de **Deep Learning** e arquiteturas híbridas na previsão univariada de séries temporais (*Time Series Forecasting*).
+
+Embora os benchmarks ETT, Weather e ECL sejam originalmente multivariados, o experimento é **univariado**: cada modelo usa apenas a série histórica da variável-alvo, sem covariáveis. Nos datasets ETT, o alvo é a coluna `OT` (*Oil Temperature*, temperatura do óleo do transformador); em Weather e ECL, é a coluna `OT` definida como alvo nesses benchmarks; em AirPassengers, é `Passengers`. As demais colunas são descartadas na ingestão (`raw → bronze`).
 
 O projeto automatiza todo o ciclo de vida do experimento, desde a ingestão de dados de benchmarks renomados (ETT, Weather, ECL e AirPassengers), passando pelo treinamento dos modelos, extração de resíduos, inferência e avaliação multi-horizonte.
 
@@ -315,7 +317,7 @@ Métricas + Gráficos
 
 # 📌 Objetivo da Pesquisa
 
-Este projeto implementa um pipeline MLOps reprodutível para avaliar modelos estatísticos, modelos de Deep Learning e arquiteturas híbridas para previsão de séries temporais multivariadas.
+Este projeto implementa um pipeline MLOps reprodutível para avaliar modelos estatísticos, modelos de Deep Learning e arquiteturas híbridas para previsão univariada de séries temporais (variável-alvo `OT`, temperatura do óleo, nos datasets ETT).
 
 A principal contribuição consiste na utilização de modelagem estatística para capturar a componente linear da série e modelos neurais para modelar os resíduos, permitindo comparar diferentes estratégias híbridas contra o melhor modelo individual de cada dataset.
 
