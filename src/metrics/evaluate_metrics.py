@@ -29,6 +29,9 @@ MODEL_COLUMNS = {
     "N-HiTS": "NHITS_Standalone",
     "Informer": "Informer_Standalone",
     "Híbrido (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS",
+    "Híbrido α(H) (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS_alpha",
+    "Híbrido blocos (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS_blocks",
+    "Híbrido blocos α (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS_blocks_alpha",
     "Híbrido (Prophet + N-HiTS)": "Hybrid_Prophet_NHITS",
     "Ingênuo (último valor)": "Naive",
     "Ingênuo Sazonal": "SeasonalNaive",
@@ -156,6 +159,7 @@ ROLLING_SOURCES = {
     "prophet": "prophet",
     "deep_learning": "deep",
     "hybrid": "hybrid",
+    "hybrid_blocks": "hybrid_blocks",
     "hybrid_prophet": "hybrid_prophet",
 }
 
@@ -344,6 +348,8 @@ class MetricsMultiHorizon:
         model_cols = set(MODEL_COLUMNS.values())
         per_h_sources = []
         for dir_key, suffix in ROLLING_SOURCES.items():
+            if dir_key not in self.config["results_paths"]:
+                continue
             rolling_file = BASE_DIR / self.config["results_paths"][dir_key] / f"{current_dataset}_{suffix}_rolling.csv"
             if not rolling_file.exists():
                 continue

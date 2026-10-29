@@ -13,7 +13,9 @@ sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução
 from src.models.deep_baselines import fit_predict_rolling, free_memory
+from src.models.arima_baseline import validation_origins
 from src.models.deep_profile import build_nhits, load_deep_config, model_horizons
+from src.models.hybrid_variants import best_val_mse, load_hybrid_config, residual_input_sizes
 from src.utils.compute import describe_compute
 from src.utils.general import get_datasets, get_protocol, get_rolling_origins, prepare_data
 
@@ -72,6 +74,27 @@ def residual_check(nf, df_res, info, input_size, h, ljung_lag=None):
     return row
 
 
+def nhits_validation_predictions(nf, df_res, input_size, h, origins):
+    """
+    Previsões do N-HiTS dos resíduos nas origens do bloco de VALIDAÇÃO (as mesmas do ARIMA de validação),
+    para escolher o alpha. Formato longo: H, cutoff, ds, NHITS. Origem sem contexto suficiente é ignorada.
+    """
+    df = df_res.sort_values("ds").reset_index(drop=True)
+    frames = []
+    for start in origins:
+        if start < input_size:
+            continue
+        context = df.iloc[start - input_size : start]
+        future = nf.predict(df=context).reset_index().sort_values("ds")
+        if len(future) < h or context["y"].isna().any():
+            continue
+        frame = future[["ds", "NHITS"]].iloc[:h].copy()
+        frame.insert(0, "cutoff", context["ds"].iloc[-1])
+        frame.insert(0, "H", h)
+        frames.append(frame)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["H", "cutoff", "ds", "NHITS"])
+
+
 def residuals_on_full_dates(df_res, df_full):
     """
     Alinha os resíduos (que terminam no último cutoff) às datas da série completa.
@@ -94,6 +117,7 @@ class HybridNHITSTrainer:
         self.metrics_dir.mkdir(parents=True, exist_ok=True)
         self.protocol = get_protocol(self.config)
         self.deep_cfg = load_deep_config(self.config)
+        self.hybrid_cfg = load_hybrid_config(self.config)
 
     def run_rolling(self, name, info):
         """Treina o N-HiTS uma vez nos resíduos de treino+val e prevê o resíduo em cada origem do teste."""
@@ -107,31 +131,51 @@ class HybridNHITSTrainer:
         df_res = residuals_on_full_dates(df_res, df_full)
 
         horizons = model_horizons(info, self.deep_cfg)
-        input_size = int(self.deep_cfg["input_size"])
+        sizes = residual_input_sizes(self.hybrid_cfg, self.deep_cfg)
+        val_origins = validation_origins(info, len(df_full))
+        arima_val_file = BASE_DIR / self.config["results_paths"]["arima"] / f"{name}_arima_val_rolling.csv"
+        df_arima_val = pd.read_csv(arima_val_file, parse_dates=["cutoff", "ds"]) if arima_val_file.exists() else None
+        if df_arima_val is None:
+            print("   ⚠️ ARIMA de validação não encontrado: sem alpha nem escolha de janela por validação.")
         print(
             f"   > Rolling: estratégia {self.deep_cfg['strategy']}, H = {horizons}; treino em treino+val, "
-            f"contexto de {input_size} resíduos por origem"
+            f"contexto de {sizes} resíduos por origem"
+            + (" (escolhido na validação)" if len(sizes) > 1 else "")
         )
 
         out_file = self.resid_dir / f"{name}_nhits_residuals_rolling.csv"
-        per_h, checks = [], []
+        val_file = self.resid_dir / f"{name}_nhits_residuals_val_rolling.csv"
+        per_h, per_h_val, checks = [], [], []
         for h in horizons:
-            model = build_nhits(h, self.config, input_size)
-            print(f"\n🚀 N-HiTS dos resíduos (rolling) H={h}...")
-            forecasts = fit_predict_rolling(
-                "NHITS",
-                model,
-                df_res,
-                info,
-                input_size,
-                horizon=h,
-                on_fitted=lambda nf, h=h: checks.append(residual_check(nf, df_res, info, input_size, h)),
-            )
+            best = None
+            for input_size in sizes:
+                model = build_nhits(h, self.config, input_size)
+                print(f"\n🚀 N-HiTS dos resíduos (rolling) H={h}, input_size={input_size}...")
+                held = {}
+
+                def after_fit(nf, h=h, input_size=input_size, held=held):
+                    held["check"] = residual_check(nf, df_res, info, input_size, h)
+                    held["check"]["input_size"] = input_size
+                    held["val"] = nhits_validation_predictions(nf, df_res, input_size, h, val_origins)
+
+                forecasts = fit_predict_rolling("NHITS", model, df_res, info, input_size, horizon=h, on_fitted=after_fit)
+                if df_arima_val is not None and len(held["val"]):
+                    score = best_val_mse(df_arima_val, held["val"], self.hybrid_cfg["alpha"]["grid_step"])
+                else:
+                    score = held["check"].get("mse_nhits", np.inf)
+                if len(sizes) > 1:
+                    print(f"   > input_size={input_size}: MSE de validação = {score:.6f}")
+                if best is None or score < best[0]:
+                    best = (score, input_size, forecasts, held)
+                del model
+                free_memory()
+            _, chosen, forecasts, held = best
             forecasts.insert(1, "H", h)
             per_h.append(forecasts)
+            per_h_val.append(held["val"])
+            checks.append(held["check"])
             pd.concat(per_h, ignore_index=True).to_csv(out_file, index=False)
-            del model
-            free_memory()
+            pd.concat(per_h_val, ignore_index=True).to_csv(val_file, index=False)
         print(f"✅ Previsões rolling do N-HiTS salvas em: {self.resid_dir.name}/{out_file.name}")
 
         df_check = pd.DataFrame(checks)

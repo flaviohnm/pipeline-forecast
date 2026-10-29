@@ -255,3 +255,82 @@ def test_rolling_plots_are_written(tmp_path):
 
     assert (tmp_path / "plots" / "SYN_mse_benchmark_rolling.png").stat().st_size > 0
     assert (tmp_path / "plots" / "SYN_forecast_lines_rolling.png").stat().st_size > 0
+
+
+# --- Variantes do híbrido: previsões na validação -----------------------------
+def test_arima_validation_covers_validation_block_without_peeking(df):
+    from src.models.arima_baseline import arima_validation, validation_origins
+
+    info = {**INFO, "rolling": {"val_size": 96, "test_size": 144, "step_size": 24}}
+    vo = validation_origins(info, len(df))
+    assert vo == [240, 264, 288]
+    val = arima_validation(df, info, n_jobs=1)
+    assert val["cutoff"].nunique() == 3 and (val.groupby("cutoff").size() == H).all()
+    first = pd.Timestamp(df["ds"].iloc[239])
+    assert first in set(val["cutoff"])
+    # dados após o fim da validação (e, no refit=False, após cada cutoff) não alteram as previsões
+    changed = arima_validation(_tamper(df, 336), info, n_jobs=1)
+    pd.testing.assert_frame_equal(val.drop(columns="y"), changed.drop(columns="y"))
+
+
+def test_arima_validation_empty_when_validation_shorter_than_horizon(df):
+    from src.models.arima_baseline import arima_validation
+
+    info = {**INFO, "rolling": {"val_size": 24, "test_size": 144, "step_size": 24}}
+    assert arima_validation(df, info, n_jobs=1).empty
+
+
+def test_nhits_validation_predictions_and_alpha_end_to_end(df, origins):
+    from src.models.hybrid_variants import alpha_by_horizon
+    from src.models.nhits_residual import nhits_validation_predictions
+
+    info = {**INFO, "rolling": {"val_size": 96, "test_size": 144, "step_size": 24}}
+    arima_val = __import__("src.models.arima_baseline", fromlist=["x"]).arima_validation(df, info, n_jobs=1)
+    rng = np.random.default_rng(0)
+    res = pd.DataFrame({"unique_id": "SYN", "ds": df["ds"], "y": rng.normal(0, 1, len(df))})
+    res.loc[get_rolling_origins(info, len(df))[-1] :, "y"] = np.nan
+    vo = [240, 264, 288]
+    held = {}
+
+    def after(nf):
+        held["val"] = nhits_validation_predictions(nf, res, 48, 24, vo)
+
+    model = NHITS(h=24, input_size=48, max_steps=3, val_check_steps=3, **QUIET)
+    fit_predict_rolling("NHITS", model, res, info, 48, horizon=24, on_fitted=after)
+    val = held["val"]
+    assert val["H"].eq(24).all() and val["cutoff"].nunique() == 3 and (val.groupby("cutoff").size() == 24).all()
+    table = alpha_by_horizon(arima_val, val, step=0.5)
+    assert table.loc[0, "H"] == 24 and 0.0 <= table.loc[0, "alpha"] <= 1.0
+    assert table.loc[0, "mse_val"] <= min(table.loc[0, "mse_val_arima"], table.loc[0, "mse_val_aditivo"]) + 1e-12
+
+
+def test_combiner_writes_alpha_blocks_and_table(tmp_path):
+    from src.models.hybrid_combiner import HybridCombiner, combine_rolling
+    from src.models.hybrid_variants import ALPHA_COL, BLOCKS_ALPHA_COL, load_hybrid_config
+
+    cuts = pd.to_datetime(["2020-01-01", "2020-01-02"])
+    ar = pd.DataFrame(
+        [{"unique_id": "s", "cutoff": c, "ds": c + pd.Timedelta(hours=i), "ARIMA": 10.0, "y": 10.5}
+         for c in cuts for i in range(1, 5)]
+    )
+    nh = pd.DataFrame(
+        [{"H": h, "cutoff": c, "ds": c + pd.Timedelta(hours=i), "NHITS": 1.0}
+         for h in (2, 4) for c in cuts for i in range(1, h + 1)]
+    )
+    comb = HybridCombiner.__new__(HybridCombiner)
+    comb.hybrid_cfg = load_hybrid_config({})
+    comb.hybrid_dir, comb.blocks_dir, comb.metrics_dir = tmp_path / "h", tmp_path / "b", tmp_path / "m"
+    comb.hybrid_dir.mkdir()
+    comb.arima_dir = comb.resid_dir = tmp_path / "v"
+    comb.arima_dir.mkdir()
+    ar.to_csv(comb.arima_dir / "S_arima_val_rolling.csv", index=False)
+    nh.to_csv(comb.resid_dir / "S_nhits_residuals_val_rolling.csv", index=False)
+
+    final = combine_rolling(ar[["unique_id", "cutoff", "ds", "ARIMA"]], nh)
+    comb.add_variants("S", final, nh, ar)
+    out = pd.read_csv(comb.hybrid_dir / "S_hybrid_rolling.csv")
+    assert np.allclose(out[ALPHA_COL], 10.5)  # alpha 0.5 com erro 0.5 e correção 1
+    blocks = pd.read_csv(comb.blocks_dir / "S_hybrid_blocks_rolling.csv")
+    assert "H" not in blocks.columns and np.allclose(blocks[BLOCKS_ALPHA_COL], 10.5)
+    table = pd.read_csv(comb.metrics_dir / "S_hybrid_alpha.csv")
+    assert set(table["variante"]) == {"alpha_H", "alpha_bloco"}

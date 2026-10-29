@@ -121,6 +121,13 @@ No `rolling`, cada modelo grava `{dataset}_{modelo}_rolling.csv` (formato longo:
 - **Prophet:** reajustado em cada origem com os dados até o cutoff.
 - **Redes (MLP, LSTM, N-HiTS, Informer):** um modelo MIMO por comprimento de previsão H (24, 48, 168, 336, 720), cada um treinado uma vez em treino+val com early stopping no bloco de validação; cada origem é prevista a partir do contexto anterior ao cutoff. Saída com coluna `H`.
 - **Híbrido ARIMA + N-HiTS:** resíduos de 1 passo do ARIMA com parâmetros fixos; um N-HiTS por H treinado nos resíduos de treino+val. Antes do teste, `results/metrics/{dataset}_residual_check.csv` mede (no bloco de validação) se o N-HiTS prevê o resíduo melhor que "zero" (`skill > 0`); `skill <= 0` gera alerta ⚠️, pois o híbrido tende a empatar com o ARIMA.
+- **Variantes do híbrido ARIMA + N-HiTS** (seção `hybrid` do config; ver `src/models/hybrid_variants.py`), todas avaliadas no mesmo protocolo e nas mesmas janelas:
+  1. `Hybrid_ARIMA_NHITS` – aditivo: ARIMA + N-HiTS(H);
+  2. `Hybrid_ARIMA_NHITS_alpha` – ARIMA + α(H)·N-HiTS(H), com α ∈ [0, 1] escolhido por H no bloco de **validação** (α = 0 reproduz o ARIMA);
+  3. `Hybrid_ARIMA_NHITS_blocks` – correção por blocos de passos (DIRMO aninhado, Ben Taieb et al., 2012): o passo i vem do N-HiTS de menor H ≥ i; arquivo em `results/forecasts/hybrid_blocks/`;
+  4. `Hybrid_ARIMA_NHITS_blocks_alpha` – blocos com α por bloco.
+  O ARIMA de validação (ajustado só no treino) fica em `results/forecasts/arima/{dataset}_arima_val_rolling.csv`, as previsões do N-HiTS na validação em `results/residuals/{dataset}_nhits_residuals_val_rolling.csv` e os α escolhidos em `results/metrics/{dataset}_hybrid_alpha.csv`. `hybrid.residual_input_size` (padrão 96, como Liu et al., 2025) define o contexto do N-HiTS dos resíduos; `hybrid.residual_input_size_grid: [96, 336]` escolhe o contexto por H na validação (HPO leve; nunca no teste).
+  Ressalvas: o N-HiTS usa o bloco de validação para early stopping, então suas previsões ali são otimistas e α tende a ser um pouco maior do que seria com dados inéditos; o DIRMO aninhado não é o DIRMO original (uma rede por bloco), que o NeuralForecast não permite; exige rodar ARIMA (passo 1) e N-HiTS dos resíduos (passo 5) de novo para gerar os arquivos de validação.
 - **Híbrido Prophet + N-HiTS:** um N-HiTS por H treinado nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados.
 - **Ingênuos (último valor e sazonal):** calculados na própria avaliação, nos dois protocolos.
 
@@ -267,6 +274,7 @@ pipeline-forecast/
 │   │   ├── deep/
 │   │   ├── ets/
 │   │   ├── hybrid/
+│   │   ├── hybrid_blocks/
 │   │   ├── hybrid_prophet/
 │   │   └── prophet/
 │   │

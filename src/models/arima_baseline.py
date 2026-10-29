@@ -45,6 +45,40 @@ def arima_rolling(df, info, n_jobs=-1):
     return cv[["unique_id", "cutoff", "ds", "y", "ARIMA"]], residuals
 
 
+def validation_origins(info, n_rows):
+    """
+    Origens do bloco de VALIDAÇÃO (cada janela de max_horizon passos cabe inteira nele), com o mesmo
+    passo do protocolo rolling. Vazio se a validação for menor que o horizonte máximo.
+    """
+    train_end = info["train_size"]
+    val_end = train_end + info["rolling"]["val_size"]
+    if val_end > n_rows:
+        raise ValueError(f"Treino+validação ({val_end}) excedem o tamanho da série ({n_rows}).")
+    return list(range(train_end, val_end - info["max_horizon"] + 1, info["rolling"]["step_size"]))
+
+
+def arima_validation(df, info, n_jobs=-1):
+    """
+    Previsões do ARIMA no bloco de validação, para escolher o peso alpha do híbrido sem tocar no teste.
+    O AutoARIMA é ajustado só no treino (sem ver a validação) e atualiza o estado em cada origem
+    (refit=False), como no teste. Retorna unique_id, cutoff, ds, y, ARIMA; vazio se não couberem janelas.
+    """
+    df = df.sort_values("ds").reset_index(drop=True)
+    origins = validation_origins(info, len(df))
+    if not origins:
+        return pd.DataFrame(columns=["unique_id", "cutoff", "ds", "y", "ARIMA"])
+    max_h = info["max_horizon"]
+    df_cut = df.iloc[: origins[-1] + max_h]
+    models = [AutoARIMA(season_length=info["seasonal_period"], approximation=True)]
+    sf = StatsForecast(models=models, freq=info["freq"], n_jobs=n_jobs)
+    cv = sf.cross_validation(
+        df=df_cut, h=max_h, n_windows=len(origins), step_size=info["rolling"]["step_size"], refit=False
+    ).reset_index()
+    cv = cv.rename(columns={"AutoARIMA": "ARIMA"})
+    check_rolling_cutoffs(cv, df, origins, h=max_h)
+    return cv[["unique_id", "cutoff", "ds", "y", "ARIMA"]]
+
+
 class ArimaScientificBaseline:
     def __init__(self, config_path="config/main_config.yaml"):
         # Mantemos a leitura do YAML apenas para mapear as pastas de saída (results_paths)
@@ -70,6 +104,14 @@ class ArimaScientificBaseline:
         out_path = self.forecast_dir / f"{name}_arima_rolling.csv"
         df_forecast.to_csv(out_path, index=False)
         print(f"   ✅ Previsões rolling salvas em: {out_path.name}")
+
+        df_val = arima_validation(df, info)
+        val_path = self.forecast_dir / f"{name}_arima_val_rolling.csv"
+        if len(df_val):
+            df_val.to_csv(val_path, index=False)
+            print(f"   ✅ Previsões do ARIMA na validação (para o alpha do híbrido) em: {val_path.name}")
+        else:
+            print("   ⚠️ Validação menor que o horizonte máximo: sem previsões de validação (alpha não será estimado).")
 
         resid_path = self.resid_dir / f"{name}_arima_residuals_rolling.csv"
         df_residuals.to_csv(resid_path, index=False)
