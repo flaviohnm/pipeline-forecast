@@ -15,6 +15,7 @@ results_paths:
   residuals: "results/residuals/"
   deep_learning: "results/forecasts/deep/"
   hybrid: "results/forecasts/hybrid/"
+  hybrid_blocks: "results/forecasts/hybrid_blocks/"
   hybrid_prophet: "results/forecasts/hybrid_prophet/"
   prophet: "results/forecasts/prophet/"
   arima: "results/forecasts/arima/"
@@ -43,6 +44,21 @@ compute:
   # gpu  -> exige GPU; se não houver, cai para CPU com aviso
   accelerator: "auto"
   devices: 1  # nº de GPUs usadas quando houver GPU
+
+# Variantes do híbrido ARIMA + N-HiTS (src/models/hybrid_variants.py)
+hybrid:
+  # Janela de contexto do N-HiTS dos resíduos. null -> usa deep_learning.input_size (336).
+  # Liu et al. (2025) usam 96 nos ETT; para escolher entre vários valores NA VALIDAÇÃO (nunca no teste),
+  # use residual_input_size_grid: [96, 336] (treina cada H uma vez por candidato).
+  residual_input_size: 96
+  residual_input_size_grid: null
+  # Híbrido com peso: ARIMA + alpha(H) * N-HiTS(H); alpha em [0, 1] escolhido no bloco de validação (0 = ARIMA)
+  alpha:
+    enabled: true
+    grid_step: 0.05
+  # Correção por blocos de passos (DIRMO aninhado): passo i vem do N-HiTS de menor H >= i; também com alpha por bloco
+  blocks:
+    enabled: true
 
 # Redes neurais: MLP, LSTM, N-HiTS, Informer e o N-HiTS dos híbridos (src/models/deep_profile.py)
 deep_learning:
