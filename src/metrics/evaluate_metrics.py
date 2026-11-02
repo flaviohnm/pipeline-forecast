@@ -164,6 +164,20 @@ ROLLING_SOURCES = {
 }
 
 
+# Cada rede é treinada isoladamente e grava o seu arquivo ({dataset}_deep_{modelo}_rolling.csv); o arquivo único
+# antigo ({dataset}_deep_rolling.csv) continua sendo lido, depois dos novos, para resultados de execuções anteriores.
+DEEP_SUFFIXES = ["deep_mlp", "deep_lstm", "deep_nhits", "deep_informer"]
+
+
+def rolling_source_files():
+    """(chave de results_paths, sufixo do arquivo) na ordem de leitura."""
+    for dir_key, suffix in ROLLING_SOURCES.items():
+        if dir_key == "deep_learning":
+            for deep_suffix in DEEP_SUFFIXES:
+                yield dir_key, deep_suffix
+        yield dir_key, suffix
+
+
 def evaluate_rolling(df_eval, horizons, model_columns, norm_mean, norm_std):
     """
     Métricas por janela (cutoff) e horizonte, e o resumo média ± desvio entre janelas.
@@ -347,7 +361,7 @@ class MetricsMultiHorizon:
         # per_h_sources e, em cada horizonte h, usa-se o modelo treinado para ele (ver passo 5).
         model_cols = set(MODEL_COLUMNS.values())
         per_h_sources = []
-        for dir_key, suffix in ROLLING_SOURCES.items():
+        for dir_key, suffix in rolling_source_files():
             if dir_key not in self.config["results_paths"]:
                 continue
             rolling_file = BASE_DIR / self.config["results_paths"][dir_key] / f"{current_dataset}_{suffix}_rolling.csv"
@@ -390,7 +404,12 @@ class MetricsMultiHorizon:
         for h in horizons:
             df_h = df_eval
             for df_m, keep in per_h_sources:
-                used = pick_model_horizon(df_m["H"].unique(), h)
+                try:
+                    used = pick_model_horizon(df_m["H"].unique(), h)
+                except ValueError as e:
+                    # Etapa que falhou ou terminou parcialmente: os modelos dessa fonte ficam de fora só neste horizonte
+                    print(f"   ⚠️ Horizonte {h}: sem previsões de {', '.join(keep) or 'uma fonte'} ({e}). Seguindo sem eles.")
+                    continue
                 sub = df_m.loc[df_m["H"] == used, ["cutoff", "ds"] + keep]
                 df_h = pd.merge(df_h, sub, on=["cutoff", "ds"], how="left")
             w, _ = evaluate_rolling(df_h, [h], model_columns, norm_mean, norm_std)

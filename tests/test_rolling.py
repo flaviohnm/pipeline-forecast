@@ -200,3 +200,10 @@ def test_process_dataset_rolling_per_horizon_files(rolling_setup):
     assert summary.loc[(24, "N-HiTS"), "MAE_mean"] == pytest.approx(1 / std_train, abs=1e-4)
     assert summary.loc[(48, "N-HiTS"), "MAE_mean"] == pytest.approx(3 / std_train, abs=1e-4)
     assert summary.loc[(24, "N-HiTS"), "n_janelas"] == len(origins)
+
+
+def test_rolling_source_files_reads_per_model_deep_files_before_legacy():
+    from src.metrics.evaluate_metrics import DEEP_SUFFIXES, rolling_source_files
+
+    order = [suffix for key, suffix in rolling_source_files() if key == "deep_learning"]
+    assert order == DEEP_SUFFIXES + ["deep"]

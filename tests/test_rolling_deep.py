@@ -98,3 +98,66 @@ def test_build_models_shared_definitions():
     assert list(models) == ["MLP", "LSTM", "NHITS", "Informer"]
     assert all(m.h == 720 for m in models.values())
     assert all(m.input_size == 336 for m in models.values())  # lookback único para todas as redes
+
+
+def _trainer(tmp_path, models=None, resume=False, strategy_h=(24, 48)):
+    trainer = DLBaselinesTrainer.__new__(DLBaselinesTrainer)
+    trainer.config = {"random_seed": 7, "compute": {"accelerator": "cpu"}}
+    trainer.deep_cfg = load_deep_config(trainer.config)
+    trainer.deep_cfg["input_size"] = INPUT_SIZE
+    trainer.deep_cfg["common"]["max_steps"] = 5
+    trainer.forecast_dir = tmp_path
+    trainer.models = models or ["MLP"]
+    trainer.resume = resume
+    trainer.failed = []
+    return trainer
+
+
+def _info_two_horizons():
+    return {**INFO, "max_horizon": 48, "forecast_horizon": [24, 48], "rolling": {"val_size": 96, "test_size": 192, "step_size": 48}}
+
+
+def test_each_model_gets_its_own_file_and_failure_is_isolated(df, tmp_path, monkeypatch):
+    trainer = _trainer(tmp_path, models=["MLP", "NHITS"])
+    info = _info_two_horizons()
+    real = DLBaselinesTrainer.run_rolling_model
+
+    def flaky(self, name, info_, df_, model_name, resume=False):
+        if model_name == "MLP":
+            raise RuntimeError("bad allocation")
+        return real(self, name, info_, df_, model_name, resume=resume)
+
+    monkeypatch.setattr(DLBaselinesTrainer, "run_rolling_model", flaky)
+    failed = trainer.run_rolling("SYN", info, df, models=["MLP", "NHITS"])
+    assert failed == ["MLP"]
+    assert not (tmp_path / "SYN_deep_mlp_rolling.csv").exists()
+    out = pd.read_csv(tmp_path / "SYN_deep_nhits_rolling.csv")
+    assert sorted(out["H"].unique()) == [24, 48]
+    assert "NHITS" in out.columns and "MLP" not in out.columns
+
+
+def test_resume_skips_finished_horizons(df, tmp_path):
+    trainer = _trainer(tmp_path)
+    info = _info_two_horizons()
+    trainer.run_rolling_model("SYN", info, df, "MLP")
+    path = tmp_path / "SYN_deep_mlp_rolling.csv"
+    full = pd.read_csv(path)
+    # simula uma execução interrompida depois do H=24
+    full[full["H"] == 24].to_csv(path, index=False)
+    sentinel = full[full["H"] == 24]["MLP"].to_numpy().copy()
+    trainer.run_rolling_model("SYN", info, df, "MLP", resume=True)
+    out = pd.read_csv(path)
+    assert sorted(out["H"].unique()) == [24, 48]
+    # o H=24 já concluído não foi retreinado
+    assert np.allclose(out[out["H"] == 24]["MLP"].to_numpy(), sentinel)
+
+
+def test_unknown_model_is_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        DLBaselinesTrainer(models=["Transformer"])
+
+
+def test_informer_inference_batch_is_small_by_default():
+    cfg = load_deep_config({})
+    assert cfg["models"]["Informer"]["windows_batch_size"] <= 32
+    assert cfg["models"]["Informer"]["inference_windows_batch_size"] <= 64

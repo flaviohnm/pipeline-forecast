@@ -135,6 +135,11 @@ Recomendado para a dissertação: `protocol: "rolling"` com `norm_stats: "train"
 
 ### Redes neurais: hiperparâmetros e estratégia por horizonte
 
+**Redes isoladas.** Cada rede (MLP, LSTM, N-HiTS, Informer) roda num processo próprio e grava o seu arquivo, `results/forecasts/deep/{dataset}_deep_{modelo}_rolling.csv`, regravado ao fim de cada H. Assim uma falha (por exemplo, falta de memória) afeta só aquele modelo e o que já foi treinado fica salvo. Para rodar só algumas: `python src/models/deep_baselines.py --models Informer`; com `--resume`, os H já presentes no arquivo são pulados. A avaliação lê os arquivos por modelo e, em seguida, o arquivo único antigo (`{dataset}_deep_rolling.csv`), se existir; apague o antigo para não misturar execuções. Um horizonte sem previsões de alguma fonte é avisado e o modelo fica de fora só nele.
+
+O Informer usa `windows_batch_size` 32 no treino e `inference_windows_batch_size` 32 na validação e na previsão (o padrão do NeuralForecast é 1024 e estourou a memória com H = 720 em CPU).
+
+
 As seções `deep_learning` e `compute` de `config/main_config.yaml` controlam todas as redes (e o N-HiTS dos híbridos):
 
 ```yaml
@@ -217,7 +222,9 @@ Escolha a etapa do experimento:
 
 --------------------------------------------------------
 
-[8]  🤖 Deep Learning Baselines
+[8]  🤖 Deep Learning Baselines (todas as redes, cada uma em um processo próprio)
+[12] [13] [14] [15]  só MLP | só LSTM | só N-HiTS | só Informer
+[16] ♻️  Retomar o Informer (pula os H já concluídos)
 [9]  📊 Avaliação de Métricas
 [10] 🎨 Geração de Gráficos
 

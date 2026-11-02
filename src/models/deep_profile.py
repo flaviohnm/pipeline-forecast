@@ -55,6 +55,7 @@ DEFAULT_DEEP_CONFIG = {
             "factor": 5,
             "dropout": 0.1,
             "windows_batch_size": 32,
+            "inference_windows_batch_size": 32,  # padrão 1024 estoura a memória na validação com H=720 (CPU)
             "max_steps": 2000,
         },
     },

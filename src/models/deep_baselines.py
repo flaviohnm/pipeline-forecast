@@ -1,5 +1,7 @@
+import argparse
 import gc
 import sys
+import traceback
 import warnings
 from pathlib import Path
 
@@ -12,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução e o preparador
-from src.models.deep_profile import build_models, load_deep_config, model_horizons
+from src.models.deep_profile import MODEL_NAMES, build_models, load_deep_config, model_horizons
 from src.utils.compute import describe_compute
 from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, get_rolling_origins, prepare_data
 
@@ -74,7 +76,7 @@ def fit_predict_rolling(model_name, model_instance, df, info, input_size, horizo
 
 
 class DLBaselinesTrainer:
-    def __init__(self, config_path="config/main_config.yaml"):
+    def __init__(self, config_path="config/main_config.yaml", models=None, resume=False):
         # Mantemos o YAML para pegar caminhos de salvamento e a random_seed global
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
@@ -83,42 +85,79 @@ class DLBaselinesTrainer:
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
         self.protocol = get_protocol(self.config)
         self.deep_cfg = load_deep_config(self.config)
+        self.models = list(models or MODEL_NAMES)
+        unknown = set(self.models) - set(MODEL_NAMES)
+        if unknown:
+            raise ValueError(f"Modelos desconhecidos: {sorted(unknown)}. Use {MODEL_NAMES}.")
+        self.resume = resume
+        self.failed = []
 
     def build_models(self, horizon, input_size=None, names=None, extra_kwargs=None):
         """Modelos de um comprimento H, montados pelo perfil de hiperparâmetros (deep_learning no YAML)."""
         return build_models(horizon, self.config, input_size=input_size, names=names, extra_kwargs=extra_kwargs)
 
-    def run_rolling(self, name, info, df):
+    def deep_file(self, name, model_name):
+        """Arquivo de previsões de UM modelo: {dataset}_deep_{modelo}_rolling.csv (coluna H + uma coluna do modelo)."""
+        return self.forecast_dir / f"{name}_deep_{model_name.lower()}_rolling.csv"
+
+    def run_rolling_model(self, name, info, df, model_name, resume=False):
         """
-        Treina cada modelo uma vez por comprimento H (strategy: per_horizon) e prevê todas as origens do bloco de teste.
-        Saída: {dataset}_deep_rolling.csv com a coluna H (comprimento do modelo) além de cutoff, ds e uma coluna por modelo.
-        O arquivo é regravado ao fim de cada H, então uma falha tardia não perde o que já foi treinado.
+        Treina UM modelo (um por comprimento H, strategy: per_horizon) e prevê todas as origens do bloco de teste.
+        Saída: {dataset}_deep_{modelo}_rolling.csv com cutoff, ds, H e a coluna do modelo. O arquivo é regravado
+        ao fim de cada H, então uma falha tardia não perde o que já foi treinado. Com `resume`, os H que já estão
+        no arquivo são pulados (use só se a configuração não mudou desde a execução interrompida).
+        """
+        horizons = model_horizons(info, self.deep_cfg)
+        input_size = int(self.deep_cfg["input_size"])
+        out_file = self.deep_file(name, model_name)
+
+        per_h = []
+        if resume and out_file.exists():
+            done = pd.read_csv(out_file, parse_dates=["cutoff", "ds"])
+            per_h.append(done)
+            print(f"♻️ Retomando {model_name}: H já concluídos = {sorted(done['H'].unique())}")
+        done_h = {int(h) for frame in per_h for h in frame["H"].unique()}
+
+        for h in horizons:
+            if h in done_h:
+                continue
+            print(f"\n🚀 Treinando (rolling) H={h}: {model_name}...")
+            model_instance = self.build_models(h, input_size, names=[model_name])[model_name]
+            df_model = fit_predict_rolling(model_name, model_instance, df, info, input_size, horizon=h)
+            df_model.insert(1, "H", h)
+            per_h.append(df_model)
+            del model_instance
+            free_memory()
+            pd.concat(per_h, ignore_index=True).to_csv(out_file, index=False)
+            print(f"💾 {model_name} H={h} concluído; previsões parciais salvas em {out_file.name}")
+
+        print(f"\n✅ Previsões rolling de {model_name} para {name} salvas em: {self.forecast_dir.name}/{out_file.name}")
+
+    def run_rolling(self, name, info, df, models=None, resume=False):
+        """
+        Roda cada modelo de forma isolada: uma falha (ex.: falta de memória) é registrada e não impede os outros.
+        Retorna a lista dos modelos que falharam.
         """
         origins = get_rolling_origins(info, len(df))
         horizons = model_horizons(info, self.deep_cfg)
         input_size = int(self.deep_cfg["input_size"])
+        models = list(models or MODEL_NAMES)
         print(
             f"📈 Rolling: {len(origins)} janelas | estratégia: {self.deep_cfg['strategy']} | H = {horizons} | "
             f"treino+val = {origins[0]} pontos (early stopping nos últimos {info['rolling']['val_size']}) | "
-            f"contexto = {input_size} pontos"
+            f"contexto = {input_size} pontos | modelos = {models}"
         )
 
-        out_file = self.forecast_dir / f"{name}_deep_rolling.csv"
-        per_h = []
-        for h in horizons:
-            df_h = None
-            for model_name, model_instance in self.build_models(h, input_size).items():
-                print(f"\n🚀 Treinando (rolling) H={h}: {model_name}...")
-                df_model = fit_predict_rolling(model_name, model_instance, df, info, input_size, horizon=h)
-                df_h = df_model if df_h is None else df_h.merge(df_model, on=["unique_id", "cutoff", "ds"])
-                del model_instance
+        failed = []
+        for model_name in models:
+            try:
+                self.run_rolling_model(name, info, df, model_name, resume=resume)
+            except Exception as e:  # noqa: BLE001 - isolar o modelo; o erro completo vai para o log
+                traceback.print_exc()
+                print(f"❌ {model_name} falhou em {name}: {type(e).__name__}: {e}")
+                failed.append(model_name)
                 free_memory()
-            df_h.insert(1, "H", h)
-            per_h.append(df_h)
-            pd.concat(per_h, ignore_index=True).to_csv(out_file, index=False)
-            print(f"💾 H={h} concluído; previsões parciais salvas em {out_file.name}")
-
-        print(f"\n✅ Previsões rolling para {name} salvas em: {self.forecast_dir.name}/{out_file.name}")
+        return failed
 
     def run(self):
         print("\n🤖 Iniciando Treinamento: Baselines de Deep Learning")
@@ -151,7 +190,7 @@ class DLBaselinesTrainer:
             input_size = int(self.deep_cfg["input_size"])
 
             if self.protocol == "rolling":
-                self.run_rolling(name, info, df)
+                self.failed += self.run_rolling(name, info, df, models=self.models, resume=self.resume)
                 continue
 
             train_df = df.iloc[:-horizon]
@@ -206,8 +245,26 @@ class DLBaselinesTrainer:
             print(f"\n✅ Todas as previsões para {name} foram salvas com segurança em: {self.forecast_dir.name}/{out_file.name}")
 
         print("\n🏁 Processo de Baselines de Deep Learning Finalizado!\n")
+        if self.failed:
+            print(f"❌ Modelos com falha: {', '.join(self.failed)}")
+            return False
+        return True
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Redes neurais isoladas (MLP, LSTM, NHITS, Informer) no protocolo rolling.")
+    parser.add_argument(
+        "--models", nargs="+", choices=MODEL_NAMES, default=list(MODEL_NAMES),
+        help="Modelos a treinar, cada um com seu próprio arquivo de previsões (padrão: todos, um após o outro).",
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Pula os horizontes H já presentes no arquivo do modelo (retoma uma execução interrompida).",
+    )
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
-    trainer = DLBaselinesTrainer()
-    trainer.run()
+    args = parse_args()
+    trainer = DLBaselinesTrainer(models=args.models, resume=args.resume)
+    sys.exit(0 if trainer.run() is not False else 1)

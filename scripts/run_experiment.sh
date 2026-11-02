@@ -147,7 +147,11 @@ run_full_pipeline() {
     run_step "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" ARIMA_Baseline
     run_step "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" ARIMA_Baseline NHiTS_Treino_Residuos
     run_step "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py"
-    run_step "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py"
+    # Cada rede roda em um processo próprio: uma falha (ex.: falta de memória) não leva as outras junto
+    run_step "Deep_MLP" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models MLP"
+    run_step "Deep_LSTM" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models LSTM"
+    run_step "Deep_NHITS" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models NHITS"
+    run_step "Deep_Informer" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models Informer"
     run_step "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py"
     run_step "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" Avaliacao_de_Metricas
 
@@ -187,7 +191,18 @@ executar_opcao() {
         5) run_and_time "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" ;;
         6) run_and_time "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" ;;
         7) run_and_time "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py" ;;
-        8) run_and_time "Deep_Learning_Baselines" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py" ;;
+        8)
+            # Todas as redes, cada uma em um processo próprio (um modelo que falha não impede os outros)
+            local m
+            for m in MLP LSTM NHITS Informer; do
+                run_and_time "Deep_${m}" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models ${m}"
+            done
+            ;;
+        12) run_and_time "Deep_MLP" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models MLP" ;;
+        13) run_and_time "Deep_LSTM" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models LSTM" ;;
+        14) run_and_time "Deep_NHITS" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models NHITS" ;;
+        15) run_and_time "Deep_Informer" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models Informer" ;;
+        16) run_and_time "Deep_Informer_retomada" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models Informer --resume" ;;
         9) run_and_time "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py" ;;
         10) run_and_time "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" ;;
         11) run_and_time "Diagnostico_GPU_CPU" "poetry run python src/utils/compute.py" ;;
@@ -243,7 +258,9 @@ while true; do
     echo "  [6]  🔗 Passo 5: Combinar Híbrido (ARIMA + N-HiTS)"
     echo "  [7]  🧬 Passo 6: Híbrido Completo (Prophet + N-HiTS)"
     echo "----------------------------------------------------------------------"
-    echo "  [8]  🤖 Passo 7: Deep Learning Baselines Puras (MLP, LSTM...)"
+    echo "  [8]  🤖 Passo 7: Deep Learning Baselines Puras (todas, uma por processo)"
+    echo "  [12] 🤖   só MLP   | [13] só LSTM | [14] só N-HiTS | [15] só Informer"
+    echo "  [16] ♻️    Retomar Informer (pula os H já concluídos)"
     echo "  [9]  📊 Passo 8: Avaliar Métricas (Benchmarking)"
     echo "  [10] 🎨 Passo 9: Gerar Gráficos e Visualizações"
     echo "  [11] 🖥️  Diagnóstico: GPU ou CPU? (dispositivo que as redes vão usar)"
