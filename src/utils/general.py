@@ -89,6 +89,22 @@ DATASETS_INFO = {
         # Protocolo rolling: 12/4/4 meses em passos de 15 min, origens a cada 1 semana
         "rolling": {"val_size": 11520, "test_size": 11520, "step_size": 672},
     },
+    "ETTm2": {
+        "filename": "ETTm2.csv",
+        "url": "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTm2.csv",
+        "target_column": "OT",
+        "date_column": "date",
+        "freq": "15min",
+        "forecast_horizon": [24, 48, 96, 288, 672],
+        "max_horizon": 672,
+        "test_size": 2880,
+        # 12 meses de treino (protocolo padrão ETT: 12/4/4 meses)
+        "train_size": 34560,
+        "val_size": 720,
+        "seasonal_period": 96,
+        # Protocolo rolling: 12/4/4 meses em passos de 15 min, origens a cada 1 semana
+        "rolling": {"val_size": 11520, "test_size": 11520, "step_size": 672},
+    },
     "ECL": {
         "filename": "ECL.csv",
         "url": "https://huggingface.co/datasets/Time-HD-Anonymous/High_Dimensional_Time_Series/resolve/main/electricity.csv",
@@ -100,6 +116,10 @@ DATASETS_INFO = {
         "test_size": 2880,
         "val_size": 2160,
         "seasonal_period": 24,
+        # Protocolo rolling: divisão 7/1/2 do ECL (26.304 h), origens a cada 1 semana.
+        # Ajuste os tamanhos se o arquivo baixado tiver outro comprimento (get_rolling_origins confere).
+        "train_size": 18412,
+        "rolling": {"val_size": 2632, "test_size": 5260, "step_size": 168},
     },
     "Weather": {
         "filename": "Weather.csv",
@@ -112,6 +132,10 @@ DATASETS_INFO = {
         "test_size": 10539,
         "val_size": 5269,
         "seasonal_period": 144,
+        # Protocolo rolling: divisão 7/1/2 do Weather (52.696 passos de 10 min), origens a cada 1 semana.
+        # Ajuste os tamanhos se o arquivo baixado tiver outro comprimento (get_rolling_origins confere).
+        "train_size": 36887,
+        "rolling": {"val_size": 5270, "test_size": 10539, "step_size": 1008},
     },
 }
 

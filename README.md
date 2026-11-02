@@ -128,7 +128,7 @@ No `rolling`, cada modelo grava `{dataset}_{modelo}_rolling.csv` (formato longo:
   4. `Hybrid_ARIMA_NHITS_blocks_alpha` – blocos com α por bloco.
   O ARIMA de validação (ajustado só no treino) fica em `results/forecasts/arima/{dataset}_arima_val_rolling.csv`, as previsões do N-HiTS na validação em `results/residuals/{dataset}_nhits_residuals_val_rolling.csv` e os α escolhidos em `results/metrics/{dataset}_hybrid_alpha.csv`. `hybrid.residual_input_size` (padrão 96, como Liu et al., 2025) define o contexto do N-HiTS dos resíduos; `hybrid.residual_input_size_grid: [96, 336]` escolhe o contexto por H na validação (HPO leve; nunca no teste).
   Ressalvas: o N-HiTS usa o bloco de validação para early stopping, então suas previsões ali são otimistas e α tende a ser um pouco maior do que seria com dados inéditos; o DIRMO aninhado não é o DIRMO original (uma rede por bloco), que o NeuralForecast não permite; exige rodar ARIMA (passo 1) e N-HiTS dos resíduos (passo 5) de novo para gerar os arquivos de validação.
-- **Híbrido Prophet + N-HiTS:** um N-HiTS por H treinado nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados.
+- **Híbrido Prophet + N-HiTS:** um N-HiTS por H treinado nos resíduos do Prophet de treino+val; em cada origem o Prophet é reajustado e os resíduos do contexto recalculados. A janela de contexto dos resíduos é a mesma do híbrido com ARIMA (`hybrid.residual_input_size`); as variantes α e blocos existem só para o ARIMA.
 - **Ingênuos (último valor e sazonal):** calculados na própria avaliação, nos dois protocolos.
 
 Recomendado para a dissertação: `protocol: "rolling"` com `norm_stats: "train"` (já é o padrão do `main_config.yaml`).

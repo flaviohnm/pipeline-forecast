@@ -15,6 +15,7 @@ sys.path.append(str(BASE_DIR))
 # Importando o novo controlador de execução e o preparador
 from src.models.deep_baselines import free_memory
 from src.models.deep_profile import build_nhits, load_deep_config, model_horizons
+from src.models.hybrid_variants import load_hybrid_config, residual_input_sizes
 from src.utils.compute import describe_compute
 from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, get_rolling_origins, prepare_data
 
@@ -112,6 +113,7 @@ class HybridProphetNHITSTrainer:
         self.forecast_dir.mkdir(parents=True, exist_ok=True)
         self.protocol = get_protocol(self.config)
         self.deep_cfg = load_deep_config(self.config)
+        self.hybrid_cfg = load_hybrid_config(self.config)
 
     def run(self):
         print("\n🧬 Iniciando Treinamento: Híbrido (Prophet + N-HiTS)")
@@ -145,6 +147,10 @@ class HybridProphetNHITSTrainer:
             input_size = int(self.deep_cfg["input_size"])
 
             if self.protocol == "rolling":
+                # Mesma janela de resíduos do híbrido com ARIMA (hybrid.residual_input_size), para comparação justa.
+                # A grade de candidatos não é usada aqui (um único valor): usa-se o primeiro.
+                input_size = residual_input_sizes(self.hybrid_cfg, self.deep_cfg)[0]
+                print(f"   > Janela dos resíduos (input_size): {input_size}")
                 horizons = model_horizons(info, self.deep_cfg)
                 print(f"   > Estratégia {self.deep_cfg['strategy']}: um N-HiTS por H = {horizons}")
                 nhits_models = {h: build_nhits(h, self.config, input_size) for h in horizons}
