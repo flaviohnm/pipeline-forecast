@@ -76,6 +76,7 @@ deep_learning:
     MLP: {}
     LSTM:
       encoder_hidden_size: 64  # LSTMa/DeepAR do Informer buscam em {32, 64, 128, 256}
+      inference_input_size: 336  # padrão -1 usa a série inteira na validação: [1, ~11.5k, H, 200] estoura a GPU nos ETTm
     NHITS:
       learning_rate: 0.001  # padrão do artigo e do NeuralForecast
     Informer:  # Zhou et al. (2021): d_model 512, 8 cabeças, 3+2 camadas, fator 5, dropout 0.1, lr 1e-4, lote de 32

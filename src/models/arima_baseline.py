@@ -122,7 +122,7 @@ class ArimaScientificBaseline:
         print("Critério: Split no Horizonte Máximo")
 
         # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO (Substitui o .env)
-        datasets_to_run = get_datasets()
+        datasets_to_run = get_datasets(self.protocol)
 
         if not datasets_to_run:
             print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")

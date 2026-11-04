@@ -2,9 +2,9 @@
 
 Este repositório contém o código-fonte e o pipeline MLOps desenvolvido para avaliar modelos estatísticos, de **Deep Learning** e arquiteturas híbridas na previsão univariada de séries temporais (*Time Series Forecasting*).
 
-Embora os benchmarks ETT, Weather e ECL sejam originalmente multivariados, o experimento é **univariado**: cada modelo usa apenas a série histórica da variável-alvo, sem covariáveis. Nos datasets ETT, o alvo é a coluna `OT` (*Oil Temperature*, temperatura do óleo do transformador); em Weather e ECL, é a coluna `OT` definida como alvo nesses benchmarks; em AirPassengers, é `Passengers`. As demais colunas são descartadas na ingestão (`raw → bronze`).
+Embora os benchmarks ETT, Weather e ECL sejam originalmente multivariados, o experimento é **univariado**: cada modelo usa apenas a série histórica da variável-alvo, sem covariáveis. Nos datasets ETT, o alvo é a coluna `OT` (*Oil Temperature*, temperatura do óleo do transformador); em Weather e ECL, é a coluna `OT` definida como alvo nesses benchmarks. As demais colunas são descartadas na ingestão (`raw → bronze`).
 
-O projeto automatiza todo o ciclo de vida do experimento, desde a ingestão de dados de benchmarks renomados (ETT, Weather, ECL e AirPassengers), passando pelo treinamento dos modelos, extração de resíduos, inferência e avaliação multi-horizonte.
+O projeto automatiza todo o ciclo de vida do experimento, desde a ingestão de dados de benchmarks renomados (ETT, Weather e ECL), passando pelo treinamento dos modelos, extração de resíduos, inferência e avaliação multi-horizonte.
 
 O objetivo da pesquisa é comparar o desempenho dos modelos híbridos desenvolvidos contra o melhor modelo individual de cada conjunto de dados.
 
@@ -81,7 +81,7 @@ A seleção de datasets é feita através da lista `EXECUTION_LIST`, em `src/uti
 Exemplo:
 
 ```python
-# Opções individuais: "AirPassengers", "ETTh1", "ETTh2", "ETTm1", "ECL", "Weather"
+# Opções individuais: "ETTh1", "ETTh2", "ETTm1", "ETTm2", "ECL", "Weather"
 # Para rodar todos de uma vez: ["ALL"]
 EXECUTION_LIST = ["ETTh1"]
 ```

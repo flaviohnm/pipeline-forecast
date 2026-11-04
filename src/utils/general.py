@@ -17,7 +17,7 @@ BRONZE_DIR = _config["data_paths"]["bronze"]
 # 1. CONTROLE DE EXECUÇÃO
 # ==============================================================================
 # Para rodar todos os datasets, use: ["ALL"]
-# Para rodar datasets específicos, use: ["AirPassengers", "ETTh1", "Weather"]
+# Para rodar datasets específicos, use: ["ETTh1", "ECL", "Weather"]
 EXECUTION_LIST = ["ETTh1"]
 
 
@@ -27,18 +27,6 @@ EXECUTION_LIST = ["ETTh1"]
 # "filename" é combinado com RAW_DIR/BRONZE_DIR (vindos do main_config.yaml)
 # em get_datasets() para montar "raw_path" e "path" dinamicamente.
 DATASETS_INFO = {
-    "AirPassengers": {
-        "filename": "AirPassengers.csv",
-        "url": "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv",
-        "target_column": "Passengers",
-        "date_column": "Month",
-        "freq": "MS",
-        "forecast_horizon": [12, 24],
-        "max_horizon": 24,
-        "test_size": 24,
-        "val_size": 12,
-        "seasonal_period": 12,
-    },
     "ETTh1": {
         "filename": "ETTh1.csv",
         "url": "https://raw.githubusercontent.com/zhouhaoyi/ETDataset/main/ETT-small/ETTh1.csv",
@@ -151,22 +139,33 @@ def _with_computed_paths(info):
     return enriched
 
 
-def get_datasets():
+def has_rolling_config(info):
+    """True se o dataset tem 'train_size' e 'rolling' (exigidos pelo protocolo rolling)."""
+    return bool(info.get("rolling")) and bool(info.get("train_size"))
+
+
+def get_datasets(protocol=None):
     """
     Retorna os dicionários correspondentes aos datasets definidos na EXECUTION_LIST,
     já com "raw_path" e "path" calculados a partir do main_config.yaml.
+    Com protocol="rolling", datasets sem 'train_size'/'rolling' são pulados com aviso
+    (em vez de interromper o script e impedir os datasets seguintes).
     """
     # Se "ALL" estiver na lista (ignorando maiúsculas/minúsculas), retorna todos
     if "ALL" in [ds.upper() for ds in EXECUTION_LIST]:
-        return {name: _with_computed_paths(info) for name, info in DATASETS_INFO.items()}
+        selected_datasets = {name: _with_computed_paths(info) for name, info in DATASETS_INFO.items()}
+    else:
+        selected_datasets = {}
+        for ds in EXECUTION_LIST:
+            if ds in DATASETS_INFO:
+                selected_datasets[ds] = _with_computed_paths(DATASETS_INFO[ds])
+            else:
+                print(f"⚠️ Aviso: Dataset '{ds}' não configurado em DATASETS_INFO. Ignorando...")
 
-    selected_datasets = {}
-
-    for ds in EXECUTION_LIST:
-        if ds in DATASETS_INFO:
-            selected_datasets[ds] = _with_computed_paths(DATASETS_INFO[ds])
-        else:
-            print(f"⚠️ Aviso: Dataset '{ds}' não configurado em DATASETS_INFO. Ignorando...")
+    if protocol == "rolling":
+        for name in [n for n, info in selected_datasets.items() if not has_rolling_config(info)]:
+            print(f"⚠️ Aviso: Dataset '{name}' sem 'train_size'/'rolling' em DATASETS_INFO; pulado no protocolo rolling.")
+            del selected_datasets[name]
 
     return selected_datasets
 
@@ -179,10 +178,10 @@ def get_rolling_origins(info, n_rows):
     Cada janela prevê max_horizon passos e precisa caber inteira no bloco de teste; as origens
     avançam step_size passos. O modelo usa dados até a posição (origem - 1), chamada de "cutoff".
     """
-    rolling = info.get("rolling")
-    if not rolling or not info.get("train_size"):
+    if not has_rolling_config(info):
         raise ValueError("Protocolo rolling exige 'train_size' e 'rolling' configurados para o dataset.")
 
+    rolling = info["rolling"]
     max_h = info["max_horizon"]
     test_start = info["train_size"] + rolling["val_size"]
     test_end = test_start + rolling["test_size"]

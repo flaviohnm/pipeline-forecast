@@ -29,8 +29,22 @@ echo "🐍 Usando: $($PYTHON_CMD --version)"
 # 2. Verifica se o Poetry está instalado
 if ! command -v poetry &> /dev/null; then
     echo "⚠️ Poetry não encontrado. Tentando instalar via pipx..."
-    $PYTHON_CMD -m pip install --user pipx
-    $PYTHON_CMD -m pipx install poetry
+    if command -v pipx &> /dev/null; then
+        PIPX_CMD="pipx"
+    elif command -v apt-get &> /dev/null; then
+        # Ubuntu/Debian recentes bloqueiam 'pip install' no Python do sistema (PEP 668),
+        # então o pipx vem do apt.
+        sudo apt-get update
+        sudo apt-get install -y pipx
+        PIPX_CMD="pipx"
+    else
+        $PYTHON_CMD -m pip install --user pipx
+        PIPX_CMD="$PYTHON_CMD -m pipx"
+    fi
+    $PIPX_CMD install poetry
+    $PIPX_CMD ensurepath || true
+    # pipx instala os executáveis em ~/.local/bin; disponibiliza já nesta sessão
+    export PATH="$HOME/.local/bin:$PATH"
     echo "✅ Poetry instalado! (Pode ser necessário reiniciar o terminal ou rodar 'source ~/.bashrc')"
 
     if ! command -v poetry &> /dev/null; then

@@ -44,7 +44,10 @@ DEFAULT_DEEP_CONFIG = {
     },
     "models": {
         "MLP": {},
-        "LSTM": {"encoder_hidden_size": 64},
+        "LSTM": {
+            "encoder_hidden_size": 64,
+            "inference_input_size": 336,  # padrão -1 usa a série inteira na validação e estoura a GPU nos ETTm
+        },
         "NHITS": {"learning_rate": 0.001},
         "Informer": {
             "learning_rate": 0.0001,

@@ -164,7 +164,7 @@ class DLBaselinesTrainer:
         print(describe_compute(self.config))
 
         # 1. CHAMA O NOVO CONTROLADOR DE EXECUÇÃO
-        datasets_to_run = get_datasets()
+        datasets_to_run = get_datasets(self.protocol)
 
         if not datasets_to_run:
             print("❌ Nenhum dataset válido encontrado na EXECUTION_LIST. Encerrando.")
