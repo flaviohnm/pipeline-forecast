@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import numpy as np
@@ -19,7 +20,7 @@ BRONZE_DIR = _config["data_paths"]["bronze"]
 # ==============================================================================
 # Para rodar todos os datasets, use: ["ALL"]
 # Para rodar datasets específicos, use: ["ETTh1", "ECL", "Weather"]
-EXECUTION_LIST = ["ETTh1"]
+EXECUTION_LIST = ["ALL"]
 
 
 # ==============================================================================
@@ -148,19 +149,32 @@ def has_rolling_config(info):
     return bool(info.get("rolling")) and bool(info.get("train_size"))
 
 
+def requested_datasets():
+    """
+    Datasets pedidos: a variável de ambiente PF_DATASETS (nomes separados por vírgula, ex.: "Weather" ou
+    "ETTh1,ECL") tem prioridade sobre a EXECUTION_LIST. O orquestrador usa isso para rodar cada dataset
+    em um processo próprio, de modo que a falha de um não derruba os outros.
+    """
+    env = os.environ.get("PF_DATASETS", "").strip()
+    if env:
+        return [d.strip() for d in env.split(",") if d.strip()]
+    return list(EXECUTION_LIST)
+
+
 def get_datasets(protocol=None):
     """
-    Retorna os dicionários correspondentes aos datasets definidos na EXECUTION_LIST,
+    Retorna os dicionários correspondentes aos datasets definidos na EXECUTION_LIST (ou PF_DATASETS),
     já com "raw_path" e "path" calculados a partir do main_config.yaml.
     Com protocol="rolling", datasets sem 'train_size'/'rolling' são pulados com aviso
     (em vez de interromper o script e impedir os datasets seguintes).
     """
     # Se "ALL" estiver na lista (ignorando maiúsculas/minúsculas), retorna todos
-    if "ALL" in [ds.upper() for ds in EXECUTION_LIST]:
+    requested = requested_datasets()
+    if "ALL" in [ds.upper() for ds in requested]:
         selected_datasets = {name: _with_computed_paths(info) for name, info in DATASETS_INFO.items()}
     else:
         selected_datasets = {}
-        for ds in EXECUTION_LIST:
+        for ds in requested:
             if ds in DATASETS_INFO:
                 selected_datasets[ds] = _with_computed_paths(DATASETS_INFO[ds])
             else:
@@ -304,6 +318,30 @@ def check_regular_series(df, freq, name):
         raise ValueError(f"{name}: {int(df['y'].isna().sum())} valor(es) ausente(s) em y.")
 
 
+def series_problems(df, info):
+    """
+    Lista (em texto) o que está errado na série bruta/bronze: datas repetidas, fora da ordem ou da grade
+    regular de info["freq"], valores ausentes e valores sentinela. Lista vazia = série pronta para uso.
+    """
+    problemas = []
+    ds = pd.to_datetime(df[info["date_column"]])
+    y = df[info["target_column"]]
+    if ds.duplicated().any():
+        problemas.append(f"{int(ds.duplicated().sum())} data(s) repetida(s)")
+    if not ds.is_monotonic_increasing:
+        problemas.append("datas fora de ordem")
+    else:
+        esperado = pd.date_range(ds.iloc[0], periods=len(ds), freq=info["freq"])
+        if not pd.DatetimeIndex(ds).equals(esperado):
+            problemas.append(f"fora da grade regular '{info['freq']}' (buracos ou passo irregular)")
+    if y.isna().any():
+        problemas.append(f"{int(y.isna().sum())} valor(es) ausente(s)")
+    sentinelas = info.get("missing_values") or []
+    if sentinelas and y.isin(sentinelas).any():
+        problemas.append(f"{int(y.isin(sentinelas).sum())} valor(es) sentinela {sentinelas}")
+    return problemas
+
+
 def prepare_data(df, info, name):
     """
     Padroniza os dados brutos para o formato exigido pelo Nixtla (StatsForecast/NeuralForecast)
@@ -315,3 +353,8 @@ def prepare_data(df, info, name):
     df_n["ds"] = pd.to_datetime(df_n["ds"])
     check_regular_series(df_n, info["freq"], name)
     return df_n
+
+
+if __name__ == "__main__":
+    # Usado pelo orquestrador: imprime, na última linha, os datasets selecionados no protocolo rolling
+    print(" ".join(get_datasets("rolling")))

@@ -21,7 +21,14 @@ if [ ! -f "$TIMES_CSV" ]; then
 fi
 
 get_git_commit() {
-    git rev-parse --short HEAD 2>/dev/null || echo "N/A"
+    local c
+    c=$(git rev-parse --short HEAD 2>/dev/null) || { echo "N/A"; return; }
+    # "+alterado": há mudanças não commitadas no código (o hash sozinho enganaria sobre o que rodou)
+    if [ -n "$(git status --porcelain -- src scripts config tests 2>/dev/null)" ]; then
+        echo "${c}+alterado"
+    else
+        echo "$c"
+    fi
 }
 
 # Estado da execução atual (usado no resumo final do pipeline completo)
@@ -129,31 +136,66 @@ write_run_summary() {
 # ==============================================================================
 # PIPELINE COMPLETO
 # ==============================================================================
+# Comando Python restrito a um dataset (PF_DATASETS tem prioridade sobre a EXECUTION_LIST)
+py_dataset() {
+    local ds=$1
+    shift
+    echo "PF_DATASETS=${ds} ${INHIBIT_CMD}poetry run python $*"
+}
+
+# Todas as etapas de modelagem de UM dataset. Cada etapa/dataset roda em processo próprio:
+# a falha de um dataset nunca derruba nem pula os outros; só pula quem depende dela NESTE dataset.
+run_dataset_pipeline() {
+    local ds=$1
+    local S="_${ds}"
+    echo "#######################################################"
+    echo "# Dataset: ${ds}"
+    echo "#######################################################"
+    run_step "AutoETS_Baseline${S}" "$(py_dataset "$ds" src/models/ets_baseline.py)"
+    run_step "Prophet_Baseline${S}" "$(py_dataset "$ds" src/models/prophet_baseline.py)"
+    run_step "ARIMA_Baseline${S}" "$(py_dataset "$ds" src/models/arima_baseline.py)"
+    run_step "NHiTS_Treino_Residuos${S}" "$(py_dataset "$ds" src/models/nhits_residual.py)" "ARIMA_Baseline${S}"
+    run_step "Hibrido_ARIMA_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_combiner.py)" "ARIMA_Baseline${S}" "NHiTS_Treino_Residuos${S}"
+    run_step "Hibrido_Prophet_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_prophet_nhits.py)"
+    # Cada rede roda em um processo próprio: uma falha (ex.: falta de memória) não leva as outras junto
+    local m
+    for m in MLP LSTM NHITS Informer; do
+        run_step "Deep_${m}${S}" "$(py_dataset "$ds" src/models/deep_baselines.py --models "$m")"
+    done
+}
+
 run_full_pipeline() {
     echo "🚀 Iniciando Execução Completa (conforme configurado em general.py)..."
     echo "🔖 Commit atual: $(get_git_commit)"
     local TOTAL_START=$(date +%s)
 
     # Sem dados não há o que treinar: a ingestão é a única etapa que interrompe o pipeline
+    # (ela regenera sozinha qualquer bronze antigo com datas repetidas, buracos ou valores sentinela)
     if ! run_step "Ingestao_de_Dados" "${INHIBIT_CMD}poetry run python src/ingestion/download_dataset.py"; then
         write_run_summary
         return 1
     fi
 
-    # Uma falha nas etapas abaixo não interrompe as demais; só pula quem depende dela
-    run_step "AutoETS_Baseline" "${INHIBIT_CMD}poetry run python src/models/ets_baseline.py"
-    run_step "Prophet_Baseline" "${INHIBIT_CMD}poetry run python src/models/prophet_baseline.py"
-    run_step "ARIMA_Baseline" "${INHIBIT_CMD}poetry run python src/models/arima_baseline.py"
-    run_step "NHiTS_Treino_Residuos" "${INHIBIT_CMD}poetry run python src/models/nhits_residual.py" ARIMA_Baseline
-    run_step "Hibrido_ARIMA_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_combiner.py" ARIMA_Baseline NHiTS_Treino_Residuos
-    run_step "Hibrido_Prophet_NHiTS" "${INHIBIT_CMD}poetry run python src/models/hybrid_prophet_nhits.py"
-    # Cada rede roda em um processo próprio: uma falha (ex.: falta de memória) não leva as outras junto
-    run_step "Deep_MLP" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models MLP"
-    run_step "Deep_LSTM" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models LSTM"
-    run_step "Deep_NHITS" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models NHITS"
-    run_step "Deep_Informer" "${INHIBIT_CMD}poetry run python src/models/deep_baselines.py --models Informer"
+    # Verificação prévia por dataset: só roda o que está íntegro e cabe no protocolo rolling
+    local ALL_DATASETS READY="" ds
+    ALL_DATASETS=$(poetry run python -m src.utils.general 2>/dev/null | tail -n 1)
+    echo "📋 Datasets selecionados: ${ALL_DATASETS}"
+    for ds in $ALL_DATASETS; do
+        if run_step "Verificacao_Previa_${ds}" "$(py_dataset "$ds" src/ingestion/preflight.py)"; then
+            READY="$READY $ds"
+        else
+            echo "🚫 ${ds} NÃO será executado (veja o log da verificação prévia)."
+        fi
+    done
+
+    for ds in $READY; do
+        run_dataset_pipeline "$ds"
+    done
+
+    # Avaliação e gráficos leem o que existir; a conferência final diz exatamente o que falta
     run_step "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py"
     run_step "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" Avaliacao_de_Metricas
+    run_step "Conferencia_Final" "${INHIBIT_CMD}poetry run python src/metrics/check_outputs.py" Avaliacao_de_Metricas
 
     local TOTAL_END=$(date +%s)
     local TOTAL_ELAPSED=$((TOTAL_END - TOTAL_START))
@@ -206,6 +248,8 @@ executar_opcao() {
         9) run_and_time "Avaliacao_de_Metricas" "${INHIBIT_CMD}poetry run python src/metrics/evaluate_metrics.py" ;;
         10) run_and_time "Geracao_de_Graficos" "${INHIBIT_CMD}poetry run python src/visualization/plot_results.py" ;;
         11) run_and_time "Diagnostico_GPU_CPU" "poetry run python src/utils/compute.py" ;;
+        17) run_and_time "Verificacao_Previa" "poetry run python src/ingestion/preflight.py" ;;
+        18) run_and_time "Conferencia_Final" "poetry run python src/metrics/check_outputs.py" ;;
         *)
             echo "❌ Opção inválida."
             return 1
@@ -264,6 +308,7 @@ while true; do
     echo "  [9]  📊 Passo 8: Avaliar Métricas (Benchmarking)"
     echo "  [10] 🎨 Passo 9: Gerar Gráficos e Visualizações"
     echo "  [11] 🖥️  Diagnóstico: GPU ou CPU? (dispositivo que as redes vão usar)"
+    echo "  [17] 🔎 Verificação prévia dos dados   | [18] ✅ Conferência final (falta algum modelo?)"
     echo "----------------------------------------------------------------------"
     echo "  [S/s] Sair do Orquestrador"
     echo ""

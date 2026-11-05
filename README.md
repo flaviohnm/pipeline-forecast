@@ -227,6 +227,7 @@ Escolha a etapa do experimento:
 [16] ♻️  Retomar o Informer (pula os H já concluídos)
 [9]  📊 Avaliação de Métricas
 [10] 🎨 Geração de Gráficos
+[17] 🔎 Verificação prévia dos dados | [18] ✅ Conferência final (falta algum modelo?)
 
 --------------------------------------------------------
 
@@ -246,7 +247,7 @@ Cada execução gera automaticamente:
 - Um log completo por etapa em `logs/`
 - Uma linha em `results/execution_times.csv` com timestamp, duração, status e commit do git — útil para reportar custo computacional na dissertação
 
-No pipeline completo (opção 1), a falha de uma etapa **não interrompe** as demais: só são puladas as que dependem dela (N-HiTS de resíduos e Híbrido ARIMA dependem do ARIMA; gráficos dependem da avaliação). Ao final é gravado `results/run_summary_<data>.txt` com as etapas que falharam ou foram puladas e as linhas de erro (❌), aviso (⚠) e alerta de viés (🚨) dos logs. O código de saída é diferente de 0 se algo falhou.
+No pipeline completo (opção 1), **cada etapa roda separadamente para cada dataset** (variável de ambiente `PF_DATASETS`, que tem prioridade sobre a `EXECUTION_LIST`). A falha de uma etapa **não interrompe** as demais, e só são puladas as que dependem dela **naquele dataset** (N-HiTS de resíduos e Híbrido ARIMA dependem do ARIMA do mesmo dataset; gráficos dependem da avaliação). Antes de treinar, uma **verificação prévia** (`src/ingestion/preflight.py`) confere por dataset se o bronze está íntegro (sem data repetida, buraco, valor ausente ou sentinela como `-9999`) e cabe no protocolo rolling; o dataset que falhar é excluído e reportado. A ingestão regenera sozinha um bronze antigo com problemas. Ao final, a **conferência final** (`src/metrics/check_outputs.py`, opção 18) lista todo modelo/horizonte/dataset que falta e quantas janelas de cada um estão incompletas; a execução só é "completa" se ela passar. O commit registrado leva o sufixo `+alterado` se houver mudanças não commitadas em `src`, `scripts`, `config` ou `tests`. Ao final é gravado `results/run_summary_<data>.txt` com as etapas que falharam ou foram puladas e as linhas de erro (❌), aviso (⚠) e alerta de viés (🚨) dos logs. O código de saída é diferente de 0 se algo falhou.
 
 ## Testes
 

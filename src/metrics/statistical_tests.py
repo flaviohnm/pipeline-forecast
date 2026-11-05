@@ -219,7 +219,10 @@ def build_friedman_blocks(df_all, metric="MSE"):
     if len(datasets) >= 2:
         for h, df_h in df_all.groupby("Horizonte"):
             wide = df_h.groupby(["Dataset", "Modelo"])[metric].mean().unstack("Modelo")
-            if len(wide) >= 2:
+            # Só modelos presentes em todos os datasets deste horizonte (execução parcial não pode
+            # produzir um ranking com conjuntos de modelos diferentes por dataset)
+            wide = wide.dropna(axis=1)
+            if len(wide) >= 2 and wide.shape[1] >= 3:
                 out[h] = wide
         return out, "dataset"
     for h, df_h in df_all.groupby("Horizonte"):
