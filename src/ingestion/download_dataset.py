@@ -11,7 +11,7 @@ sys.path.append(str(BASE_DIR))
 # Importando o novo controlador de execução (já lê data_paths do main_config.yaml)
 from src.utils.general import BRONZE_DIR as _BRONZE_DIR
 from src.utils.general import RAW_DIR as _RAW_DIR
-from src.utils.general import get_datasets
+from src.utils.general import clean_series, get_datasets
 
 # Garante que as pastas data/raw/ e data/bronze/ existam (mesma fonte que general.py usa)
 RAW_DIR = BASE_DIR / _RAW_DIR
@@ -63,7 +63,13 @@ def baixar_dataset(dataset_name, info):
         colunas_necessarias = [info["date_column"], info["target_column"]]
 
         if all(col in df.columns for col in colunas_necessarias):
-            df = df[colunas_necessarias]
+            df, resumo = clean_series(df[colunas_necessarias], info)
+            if resumo["duplicadas"] or resumo["sentinelas"] or resumo["ausentes_apos_grade"]:
+                print(
+                    f"   🧽 Limpeza: {resumo['duplicadas']} data(s) repetida(s) removida(s), "
+                    f"{resumo['sentinelas']} valor(es) sentinela e {resumo['ausentes_apos_grade']} ponto(s) ausente(s) "
+                    f"na grade '{info['freq']}' interpolados ({resumo['linhas_antes']} -> {resumo['linhas_depois']} linhas)."
+                )
             df.to_csv(bronze_path, index=False)
             print(f"✅ {dataset_name} limpo e salvo em {info['path']} com as colunas: {colunas_necessarias}.")
         else:

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -115,6 +116,9 @@ DATASETS_INFO = {
         "target_column": "OT",
         "date_column": "date",
         "freq": "10min",
+        # O arquivo usa -9999 como "sem medição" (50 valores no treino); sem tratar, o desvio-padrão do treino
+        # passa de ~18 para ~384 e o ARIMA/as redes ajustam sobre outliers.
+        "missing_values": [-9999],
         "forecast_horizon": [24, 48, 168, 336, 720],
         "max_horizon": 720,
         "test_size": 10539,
@@ -245,12 +249,69 @@ def check_rolling_cutoffs(df_cv, df, origins, h=None):
                 )
 
 
+def clean_series(df, info):
+    """
+    Limpeza da série na camada bronze: ordena por data, remove datas repetidas, troca valores sentinela
+    (info["missing_values"], ex.: -9999) por ausente, completa a grade regular de info["freq"] e
+    interpola no tempo os pontos ausentes. Retorna (DataFrame limpo, dict com as contagens).
+    """
+    date_col, target = info["date_column"], info["target_column"]
+    out = df[[date_col, target]].copy()
+    out[date_col] = pd.to_datetime(out[date_col])
+    out = out.sort_values(date_col)
+
+    n_duplicadas = int(out[date_col].duplicated().sum())
+    out = out.drop_duplicates(subset=date_col, keep="first")
+
+    sentinelas = info.get("missing_values") or []
+    mask = out[target].isin(sentinelas)
+    n_sentinelas = int(mask.sum())
+    out.loc[mask, target] = np.nan
+
+    grade = pd.date_range(out[date_col].iloc[0], out[date_col].iloc[-1], freq=info["freq"])
+    serie = out.set_index(date_col)[target].reindex(grade)
+    n_ausentes = int(serie.isna().sum())
+    serie = serie.interpolate(method="time", limit_direction="both")
+
+    limpo = serie.rename_axis(date_col).reset_index()
+    resumo = {
+        "duplicadas": n_duplicadas,
+        "sentinelas": n_sentinelas,
+        "ausentes_apos_grade": n_ausentes,
+        "linhas_antes": len(df),
+        "linhas_depois": len(limpo),
+    }
+    return limpo, resumo
+
+
+def check_regular_series(df, freq, name):
+    """
+    Falha com mensagem clara se a série (colunas ds, y) tiver data repetida, buraco, passo irregular ou
+    valor ausente. As origens do rolling são calculadas por POSIÇÃO; com datas irregulares, ARIMA, redes
+    e híbrido passam a apontar para datas diferentes.
+    """
+    ds = pd.DatetimeIndex(df["ds"])
+    if ds.duplicated().any():
+        raise ValueError(f"{name}: {int(ds.duplicated().sum())} data(s) repetida(s) na série (ex.: {ds[ds.duplicated()][0]}).")
+    esperado = pd.date_range(ds[0], periods=len(ds), freq=freq)
+    if not ds.equals(esperado):
+        pos = int(np.argmax(np.asarray(ds != esperado)))
+        raise ValueError(
+            f"{name}: série fora da grade regular '{freq}' (primeira diferença na posição {pos}: "
+            f"{ds[pos]} em vez de {esperado[pos]}). Refaça a ingestão (apague o arquivo bronze)."
+        )
+    if df["y"].isna().any():
+        raise ValueError(f"{name}: {int(df['y'].isna().sum())} valor(es) ausente(s) em y.")
+
+
 def prepare_data(df, info, name):
     """
-    Padroniza os dados brutos para o formato exigido pelo Nixtla (StatsForecast/NeuralForecast).
+    Padroniza os dados brutos para o formato exigido pelo Nixtla (StatsForecast/NeuralForecast)
+    e confere que a série é regular (sem datas repetidas, buracos ou valores ausentes).
     """
     df_n = df[[info["date_column"], info["target_column"]]].copy()
     df_n.columns = ["ds", "y"]
     df_n["unique_id"] = name
     df_n["ds"] = pd.to_datetime(df_n["ds"])
+    check_regular_series(df_n, info["freq"], name)
     return df_n
