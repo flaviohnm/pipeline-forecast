@@ -14,7 +14,7 @@ sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução e o preparador
 from src.models.deep_baselines import free_memory
-from src.models.deep_profile import build_nhits, load_deep_config, model_horizons
+from src.models.deep_profile import build_nhits, load_deep_config, model_horizons, tuned_input_size
 from src.models.hybrid_variants import load_hybrid_config, residual_input_sizes
 from src.utils.compute import describe_compute
 from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, get_rolling_origins, prepare_data
@@ -150,10 +150,12 @@ class HybridProphetNHITSTrainer:
                 # Mesma janela de resíduos do híbrido com ARIMA (hybrid.residual_input_size), para comparação justa.
                 # A grade de candidatos não é usada aqui (um único valor): usa-se o primeiro.
                 input_size = residual_input_sizes(self.hybrid_cfg, self.deep_cfg)[0]
+                # Com HPO, usa os hiperparâmetros da rede dos resíduos (NHITS_RES, buscados nos resíduos do ARIMA)
+                input_size = tuned_input_size(self.config, name, "NHITS_RES", input_size)
                 print(f"   > Janela dos resíduos (input_size): {input_size}")
                 horizons = model_horizons(info, self.deep_cfg)
                 print(f"   > Estratégia {self.deep_cfg['strategy']}: um N-HiTS por H = {horizons}")
-                nhits_models = {h: build_nhits(h, self.config, input_size) for h in horizons}
+                nhits_models = {h: build_nhits(h, self.config, input_size, dataset=name) for h in horizons}
                 df_rolling = hybrid_prophet_rolling(df, info, nhits_models, input_size)
                 out_file = self.forecast_dir / f"{name}_hybrid_prophet_rolling.csv"
                 df_rolling.to_csv(out_file, index=False)

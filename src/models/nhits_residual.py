@@ -14,7 +14,7 @@ sys.path.append(str(BASE_DIR))
 # Importando o novo controlador de execução
 from src.models.deep_baselines import fit_predict_rolling, free_memory
 from src.models.arima_baseline import validation_origins
-from src.models.deep_profile import build_nhits, load_deep_config, model_horizons
+from src.models.deep_profile import build_nhits, load_deep_config, load_tuned, model_horizons, tuned_input_size
 from src.models.hybrid_variants import best_val_mse, load_hybrid_config, residual_input_sizes
 from src.utils.compute import describe_compute
 from src.utils.general import get_datasets, get_protocol, get_rolling_origins, prepare_data
@@ -132,6 +132,9 @@ class HybridNHITSTrainer:
 
         horizons = model_horizons(info, self.deep_cfg)
         sizes = residual_input_sizes(self.hybrid_cfg, self.deep_cfg)
+        if load_tuned(self.config, name, "NHITS_RES"):
+            # janela e demais hiperparâmetros vêm da busca (hpo.py); a grade manual de janelas deixa de valer
+            sizes = [tuned_input_size(self.config, name, "NHITS_RES", sizes[0])]
         val_origins = validation_origins(info, len(df_full))
         arima_val_file = BASE_DIR / self.config["results_paths"]["arima"] / f"{name}_arima_val_rolling.csv"
         df_arima_val = pd.read_csv(arima_val_file, parse_dates=["cutoff", "ds"]) if arima_val_file.exists() else None
@@ -149,7 +152,7 @@ class HybridNHITSTrainer:
         for h in horizons:
             best = None
             for input_size in sizes:
-                model = build_nhits(h, self.config, input_size)
+                model = build_nhits(h, self.config, input_size, dataset=name)
                 print(f"\n🚀 N-HiTS dos resíduos (rolling) H={h}, input_size={input_size}...")
                 held = {}
 

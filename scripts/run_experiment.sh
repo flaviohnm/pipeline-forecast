@@ -154,13 +154,26 @@ run_dataset_pipeline() {
     run_step "AutoETS_Baseline${S}" "$(py_dataset "$ds" src/models/ets_baseline.py)"
     run_step "Prophet_Baseline${S}" "$(py_dataset "$ds" src/models/prophet_baseline.py)"
     run_step "ARIMA_Baseline${S}" "$(py_dataset "$ds" src/models/arima_baseline.py)"
-    run_step "NHiTS_Treino_Residuos${S}" "$(py_dataset "$ds" src/models/nhits_residual.py)" "ARIMA_Baseline${S}"
+
+    # Otimização de hiperparâmetros (Optuna, hpo.enabled no YAML): um processo por rede, só no bloco de validação.
+    # A rede dos resíduos precisa do ARIMA do mesmo dataset; os treinos finais só rodam se a busca do modelo concluiu.
+    local m hpo_res_dep="" hpo_dep
+    if [ "$HPO_ON" = "1" ]; then
+        for m in MLP LSTM NHITS Informer; do
+            run_step "HPO_${m}${S}" "$(py_dataset "$ds" src/models/hpo.py --models "$m")"
+        done
+        run_step "HPO_NHITS_RES${S}" "$(py_dataset "$ds" src/models/hpo.py --models NHITS_RES)" "ARIMA_Baseline${S}"
+        hpo_res_dep="HPO_NHITS_RES${S}"
+    fi
+
+    run_step "NHiTS_Treino_Residuos${S}" "$(py_dataset "$ds" src/models/nhits_residual.py)" "ARIMA_Baseline${S}" $hpo_res_dep
     run_step "Hibrido_ARIMA_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_combiner.py)" "ARIMA_Baseline${S}" "NHiTS_Treino_Residuos${S}"
-    run_step "Hibrido_Prophet_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_prophet_nhits.py)"
+    run_step "Hibrido_Prophet_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_prophet_nhits.py)" $hpo_res_dep
     # Cada rede roda em um processo próprio: uma falha (ex.: falta de memória) não leva as outras junto
-    local m
     for m in MLP LSTM NHITS Informer; do
-        run_step "Deep_${m}${S}" "$(py_dataset "$ds" src/models/deep_baselines.py --models "$m")"
+        hpo_dep=""
+        [ "$HPO_ON" = "1" ] && hpo_dep="HPO_${m}${S}"
+        run_step "Deep_${m}${S}" "$(py_dataset "$ds" src/models/deep_baselines.py --models "$m")" $hpo_dep
     done
 }
 
@@ -175,6 +188,11 @@ run_full_pipeline() {
         write_run_summary
         return 1
     fi
+
+    # Otimização de hiperparâmetros ligada? (hpo.enabled em config/main_config.yaml)
+    HPO_ON=$(poetry run python src/models/hpo.py --enabled 2>/dev/null | tail -n 1)
+    [ "$HPO_ON" = "1" ] || HPO_ON=0
+    echo "🔧 Otimização de hiperparâmetros (Optuna): $([ "$HPO_ON" = "1" ] && echo ligada || echo desligada)"
 
     # Verificação prévia por dataset: só roda o que está íntegro e cabe no protocolo rolling
     local ALL_DATASETS READY="" ds
@@ -250,6 +268,13 @@ executar_opcao() {
         11) run_and_time "Diagnostico_GPU_CPU" "poetry run python src/utils/compute.py" ;;
         17) run_and_time "Verificacao_Previa" "poetry run python src/ingestion/preflight.py" ;;
         18) run_and_time "Conferencia_Final" "poetry run python src/metrics/check_outputs.py" ;;
+        19)
+            # Busca de hiperparâmetros de todas as redes (rede dos resíduos exige o ARIMA já rodado), um processo por modelo
+            local k
+            for k in MLP LSTM NHITS Informer NHITS_RES; do
+                run_and_time "HPO_${k}" "${INHIBIT_CMD}poetry run python src/models/hpo.py --models ${k}"
+            done
+            ;;
         *)
             echo "❌ Opção inválida."
             return 1
@@ -309,6 +334,7 @@ while true; do
     echo "  [10] 🎨 Passo 9: Gerar Gráficos e Visualizações"
     echo "  [11] 🖥️  Diagnóstico: GPU ou CPU? (dispositivo que as redes vão usar)"
     echo "  [17] 🔎 Verificação prévia dos dados   | [18] ✅ Conferência final (falta algum modelo?)"
+    echo "  [19] 🔧 Otimização de hiperparâmetros das redes (Optuna)"
     echo "----------------------------------------------------------------------"
     echo "  [S/s] Sair do Orquestrador"
     echo ""

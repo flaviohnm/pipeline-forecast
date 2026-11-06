@@ -1,3 +1,4 @@
+
 # 🚀 Pipeline MLOps para Time Series Forecasting (Híbrido)
 
 Este repositório contém o código-fonte e o pipeline MLOps desenvolvido para avaliar modelos estatísticos, de **Deep Learning** e arquiteturas híbridas na previsão univariada de séries temporais (*Time Series Forecasting*).
@@ -228,6 +229,7 @@ Escolha a etapa do experimento:
 [9]  📊 Avaliação de Métricas
 [10] 🎨 Geração de Gráficos
 [17] 🔎 Verificação prévia dos dados | [18] ✅ Conferência final (falta algum modelo?)
+[19] 🔧 Otimização de hiperparâmetros das redes (Optuna)
 
 --------------------------------------------------------
 
@@ -248,6 +250,18 @@ Cada execução gera automaticamente:
 - Uma linha em `results/execution_times.csv` com timestamp, duração, status e commit do git — útil para reportar custo computacional na dissertação
 
 No pipeline completo (opção 1), **cada etapa roda separadamente para cada dataset** (variável de ambiente `PF_DATASETS`, que tem prioridade sobre a `EXECUTION_LIST`). A falha de uma etapa **não interrompe** as demais, e só são puladas as que dependem dela **naquele dataset** (N-HiTS de resíduos e Híbrido ARIMA dependem do ARIMA do mesmo dataset; gráficos dependem da avaliação). Antes de treinar, uma **verificação prévia** (`src/ingestion/preflight.py`) confere por dataset se o bronze está íntegro (sem data repetida, buraco, valor ausente ou sentinela como `-9999`) e cabe no protocolo rolling; o dataset que falhar é excluído e reportado. A ingestão regenera sozinha um bronze antigo com problemas. Ao final, a **conferência final** (`src/metrics/check_outputs.py`, opção 18) lista todo modelo/horizonte/dataset que falta e quantas janelas de cada um estão incompletas; a execução só é "completa" se ela passar. O commit registrado leva o sufixo `+alterado` se houver mudanças não commitadas em `src`, `scripts`, `config` ou `tests`. Ao final é gravado `results/run_summary_<data>.txt` com as etapas que falharam ou foram puladas e as linhas de erro (❌), aviso (⚠) e alerta de viés (🚨) dos logs. O código de saída é diferente de 0 se algo falhou.
+
+### Otimização de hiperparâmetros (Optuna)
+
+`src/models/hpo.py` otimiza as redes (MLP, LSTM, N-HiTS, Informer e a N-HiTS dos resíduos dos híbridos, chave `NHITS_RES`) **por dataset**, e é ligada por `hpo.enabled` no `config/main_config.yaml` (opção 19 do menu ou a etapa `HPO_<modelo>_<dataset>` do pipeline completo).
+
+- **Sem tocar no teste:** cada tentativa treina só no bloco de treino (early stopping numa parte final dele) e é avaliada em janelas rolantes do bloco de **validação**. O critério é o MSE de validação normalizado pela variância do treino; para `NHITS_RES` é o MSE de validação do híbrido ARIMA + α·N-HiTS.
+- **Mesmo orçamento para todos** (`hpo.n_trials`, 20; o Informer, mais caro, tem `n_trials_by_model`, 8), sampler TPE com a `random_seed`, e a **1ª tentativa é a configuração atual do projeto** (referência): o resultado nunca é pior que ela na validação e a melhora fica registrada.
+- **Um horizonte de referência por dataset** (`hpo.tuning_horizon`, padrão o do meio da lista); os parâmetros encontrados valem para todos os H.
+- **Espaço de busca** (declarado em `SEARCH_SPACE`): janela de entrada (24/96/336; Informer 96/336), taxa de aprendizado, largura/camadas (MLP, LSTM, N-HiTS), dropout; na `NHITS_RES` o mesmo espaço da N-HiTS. A `NHITS_RES` do ARIMA também é usada pelo híbrido Prophet + N-HiTS.
+- **Evidência** em `results/hpo/`: `{dataset}_{modelo}_trials.csv` (todas as tentativas), `{dataset}_{modelo}_best.json` (configuração congelada, valor de referência, melhora %, semente, commit, versão do Optuna) e `{dataset}_{modelo}.db` (estudo retomável: rodar de novo continua de onde parou).
+- **Uso nos treinos finais:** com `hpo.use_tuned: true`, `deep_baselines.py`, `nhits_residual.py` e `hybrid_prophet_nhits.py` leem o `*_best.json` do dataset (e imprimem os parâmetros usados). No pipeline completo, cada treino final só roda se a busca do seu modelo concluiu; a conferência final exige os cinco `*_best.json` por dataset.
+- Execução avulsa: `PF_DATASETS=ETTh1 poetry run python src/models/hpo.py --models MLP NHITS_RES --trials 20` (a `NHITS_RES` exige o ARIMA rolling do dataset já rodado).
 
 ## Testes
 

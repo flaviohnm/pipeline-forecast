@@ -14,15 +14,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 from src.metrics.evaluate_metrics import MODEL_COLUMNS
+from src.models.deep_profile import HPO_MODEL_KEYS, hpo_best_path, load_hpo_config
 from src.utils.general import get_datasets, get_rolling_origins
 
 
-def missing_for_dataset(name, info, metrics_dir, n_rows):
+def missing_for_dataset(name, info, metrics_dir, n_rows, config=None):
     """Lista do que falta para o dataset estar completo (vazia = completo)."""
     faltas = []
+    if config is not None and load_hpo_config(config)["enabled"]:
+        faltas += [f"{hpo_best_path(config, name, k).name} ausente (otimização de hiperparâmetros)"
+                   for k in HPO_MODEL_KEYS if not hpo_best_path(config, name, k).exists()]
     eval_file = metrics_dir / f"{name}_evaluation_rolling.csv"
     if not eval_file.exists():
-        return [f"{eval_file.name} ausente"]
+        return faltas + [f"{eval_file.name} ausente"]
     df = pd.read_csv(eval_file)
     esperado_janelas = len(get_rolling_origins(info, n_rows))
     got = {(int(r.Horizonte), r.Modelo): int(r.n_janelas) for r in df.itertuples()}
@@ -52,7 +56,7 @@ def main():
             incompleto = True
             print(f"INCOMPLETO {name}: bronze ausente")
             continue
-        faltas = missing_for_dataset(name, info, metrics_dir, n_rows=len(pd.read_csv(bronze)))
+        faltas = missing_for_dataset(name, info, metrics_dir, n_rows=len(pd.read_csv(bronze)), config=config)
         if faltas:
             incompleto = True
             print(f"INCOMPLETO {name}:")

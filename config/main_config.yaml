@@ -90,3 +90,16 @@ deep_learning:
       windows_batch_size: 32
       inference_windows_batch_size: 32  # padrão 1024 estoura a memória na validação com H=720 (CPU)
       max_steps: 2000
+
+# Otimização de hiperparâmetros das redes com Optuna (src/models/hpo.py). A busca usa SÓ o bloco de treino (treino)
+# e o de validação (avaliação); o teste nunca é lido. Resultados e evidências em results/hpo/.
+hpo:
+  enabled: true  # roda a etapa HPO_* no pipeline completo e exige results/hpo/*_best.json na conferência final
+  use_tuned: true  # os treinos finais usam os hiperparâmetros encontrados (se o arquivo do dataset existir)
+  n_trials: 20  # tentativas por (dataset, modelo); a 1ª é sempre a configuração atual do projeto (referência)
+  n_trials_by_model:  # o Informer é bem mais caro: orçamento menor, declarado aqui
+    Informer: 8
+  timeout_minutes: null  # limite de tempo por busca (null = sem limite)
+  tuning_horizon: null  # H usado na busca; null -> o horizonte do meio da lista do dataset
+  trial_max_steps: null  # limita max_steps só durante a busca (ex.: 300) para acelerar; null = o do treino final
+  results_dir: "results/hpo/"

@@ -11,6 +11,7 @@ Estratégia de horizonte (`deep_learning.strategy`):
 - single_truncated: um único modelo com H = max_horizon, cujos primeiros h passos são usados nos horizontes menores.
 """
 
+import json
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -65,6 +66,70 @@ DEFAULT_DEEP_CONFIG = {
 }
 
 
+# Otimização de hiperparâmetros (src/models/hpo.py). A seção `hpo` do main_config.yaml sobrescreve estes padrões.
+#   enabled ........ roda a etapa de busca no pipeline completo e a conferência final exige os arquivos *_best.json
+#   use_tuned ...... os treinos finais usam os hiperparâmetros encontrados, se o arquivo do dataset existir
+#   n_trials ....... tentativas por (dataset, modelo); n_trials_by_model sobrescreve por modelo
+#   tuning_horizon . horizonte H usado na busca (null -> o do meio da lista de horizontes do dataset)
+#   trial_max_steps  limite de max_steps só durante a busca (null -> o mesmo do treino final)
+DEFAULT_HPO_CONFIG = {
+    "enabled": False,
+    "use_tuned": True,
+    "n_trials": 20,
+    "n_trials_by_model": {"Informer": 8},
+    "timeout_minutes": None,
+    "tuning_horizon": None,
+    "trial_max_steps": None,
+    "results_dir": "results/hpo/",
+}
+HPO_MODEL_KEYS = ("MLP", "LSTM", "NHITS", "Informer", "NHITS_RES")  # NHITS_RES = N-HiTS dos resíduos (híbridos)
+
+
+def load_hpo_config(config=None):
+    cfg = deepcopy(DEFAULT_HPO_CONFIG)
+    user = (config or {}).get("hpo") or {}
+    for key, value in user.items():
+        if isinstance(value, dict) and isinstance(cfg.get(key), dict):
+            cfg[key] = {**cfg[key], **value}
+        else:
+            cfg[key] = value
+    if int(cfg["n_trials"]) <= 0:
+        raise ValueError("hpo.n_trials deve ser positivo.")
+    unknown = set(cfg["n_trials_by_model"]) - set(HPO_MODEL_KEYS)
+    if unknown:
+        raise ValueError(f"hpo.n_trials_by_model tem modelos desconhecidos: {sorted(unknown)}. Use {HPO_MODEL_KEYS}.")
+    return cfg
+
+
+def hpo_dir(config=None):
+    return BASE_DIR / load_hpo_config(config)["results_dir"]
+
+
+def hpo_best_path(config, dataset, key):
+    return hpo_dir(config) / f"{dataset}_{key}_best.json"
+
+
+def load_tuned(config, dataset, key):
+    """
+    Hiperparâmetros otimizados de (dataset, modelo) lidos de {dataset}_{key}_best.json, ou None se `hpo.use_tuned`
+    estiver desligado, não houver dataset ou o arquivo não existir. Retorna o dict gravado pelo hpo.py
+    (`params` = kwargs do modelo, incluindo `input_size`).
+    """
+    if not dataset or not load_hpo_config(config)["use_tuned"]:
+        return None
+    path = hpo_best_path(config, dataset, key)
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def tuned_input_size(config, dataset, key, default):
+    """input_size otimizado de (dataset, modelo) se houver; senão `default`."""
+    tuned = load_tuned(config, dataset, key)
+    return int(tuned["params"]["input_size"]) if tuned and "input_size" in tuned["params"] else default
+
+
 def _merge(base, override):
     out = deepcopy(base)
     for key, value in (override or {}).items():
@@ -116,13 +181,16 @@ def _loss(name):
     return {"mse": MSE, "mae": MAE}[str(name).lower()]()
 
 
-def build_models(horizon, config=None, input_size=None, names=None, extra_kwargs=None):
+def build_models(horizon, config=None, input_size=None, names=None, extra_kwargs=None, dataset=None, tuned_keys=None, overrides=None):
     """
     Modelos do NeuralForecast para um comprimento de previsão `horizon` (H).
     - `config`: dict do main_config.yaml (seções `deep_learning`, `compute` e `random_seed`).
     - `input_size`: sobrescreve `deep_learning.input_size` (usado nos testes).
     - `names`: subconjunto de MODEL_NAMES (padrão: todos).
     - `extra_kwargs`: kwargs adicionais do Trainer/modelo (ex.: silenciar logs nos testes); têm prioridade.
+    - `dataset`: se informado e houver hiperparâmetros otimizados para ele (hpo.py), eles substituem o perfil do YAML
+      (inclusive o `input_size` do modelo). `tuned_keys` mapeia nome do modelo -> chave do arquivo (ex.: NHITS -> NHITS_RES).
+    - `overrides`: {modelo: {kwargs}} aplicados por cima do perfil e dos otimizados (usado pela própria busca).
     """
     from neuralforecast.models import LSTM, MLP, NHITS, Informer
 
@@ -143,11 +211,27 @@ def build_models(horizon, config=None, input_size=None, names=None, extra_kwargs
     models = {}
     for name in names:
         params = _merge(cfg["common"], cfg["models"].get(name, {}))
+        model_input_size = input_size
+        tuned = load_tuned(config, dataset, (tuned_keys or {}).get(name, name))
+        if tuned:
+            tuned_params = dict(tuned["params"])
+            model_input_size = int(tuned_params.pop("input_size", model_input_size))
+            params.update(tuned_params)
+            print(f"   > Hiperparâmetros otimizados ({dataset}/{(tuned_keys or {}).get(name, name)}): {tuned['params']}")
+        override = dict((overrides or {}).get(name, {}))
+        model_input_size = int(override.pop("input_size", model_input_size))
+        params.update(override)
         params["loss"] = _loss(params["loss"])
-        models[name] = classes[name](h=horizon, input_size=input_size, **params, **runtime)
+        models[name] = classes[name](h=horizon, input_size=model_input_size, **params, **runtime)
     return models
 
 
-def build_nhits(horizon, config=None, input_size=None, extra_kwargs=None):
-    """N-HiTS com o mesmo perfil da baseline pura (também usado nos resíduos dos híbridos ARIMA e Prophet)."""
-    return build_models(horizon, config, input_size=input_size, names=["NHITS"], extra_kwargs=extra_kwargs)["NHITS"]
+def build_nhits(horizon, config=None, input_size=None, extra_kwargs=None, dataset=None, tuned_key="NHITS_RES", overrides=None):
+    """
+    N-HiTS com o mesmo perfil da baseline pura (também usado nos resíduos dos híbridos ARIMA e Prophet).
+    Com `dataset`, usa os hiperparâmetros otimizados da chave `tuned_key` (padrão NHITS_RES = rede dos resíduos).
+    """
+    return build_models(
+        horizon, config, input_size=input_size, names=["NHITS"], extra_kwargs=extra_kwargs,
+        dataset=dataset, tuned_keys={"NHITS": tuned_key}, overrides={"NHITS": overrides or {}},
+    )["NHITS"]

@@ -14,7 +14,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(BASE_DIR))
 
 # Importando o novo controlador de execução e o preparador
-from src.models.deep_profile import MODEL_NAMES, build_models, load_deep_config, model_horizons
+from src.models.deep_profile import MODEL_NAMES, build_models, load_deep_config, model_horizons, tuned_input_size
 from src.utils.compute import describe_compute
 from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol, get_rolling_origins, prepare_data
 
@@ -92,9 +92,10 @@ class DLBaselinesTrainer:
         self.resume = resume
         self.failed = []
 
-    def build_models(self, horizon, input_size=None, names=None, extra_kwargs=None):
-        """Modelos de um comprimento H, montados pelo perfil de hiperparâmetros (deep_learning no YAML)."""
-        return build_models(horizon, self.config, input_size=input_size, names=names, extra_kwargs=extra_kwargs)
+    def build_models(self, horizon, input_size=None, names=None, extra_kwargs=None, dataset=None):
+        """Modelos de um comprimento H, montados pelo perfil de hiperparâmetros (deep_learning no YAML).
+        Com `dataset`, usa os hiperparâmetros otimizados (hpo.py) quando existirem."""
+        return build_models(horizon, self.config, input_size=input_size, names=names, extra_kwargs=extra_kwargs, dataset=dataset)
 
     def deep_file(self, name, model_name):
         """Arquivo de previsões de UM modelo: {dataset}_deep_{modelo}_rolling.csv (coluna H + uma coluna do modelo)."""
@@ -108,7 +109,7 @@ class DLBaselinesTrainer:
         no arquivo são pulados (use só se a configuração não mudou desde a execução interrompida).
         """
         horizons = model_horizons(info, self.deep_cfg)
-        input_size = int(self.deep_cfg["input_size"])
+        input_size = tuned_input_size(self.config, name, model_name, int(self.deep_cfg["input_size"]))
         out_file = self.deep_file(name, model_name)
 
         per_h = []
@@ -122,7 +123,7 @@ class DLBaselinesTrainer:
             if h in done_h:
                 continue
             print(f"\n🚀 Treinando (rolling) H={h}: {model_name}...")
-            model_instance = self.build_models(h, input_size, names=[model_name])[model_name]
+            model_instance = self.build_models(h, input_size, names=[model_name], dataset=name)[model_name]
             df_model = fit_predict_rolling(model_name, model_instance, df, info, input_size, horizon=h)
             df_model.insert(1, "H", h)
             per_h.append(df_model)
