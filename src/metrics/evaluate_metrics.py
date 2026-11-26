@@ -32,6 +32,8 @@ MODEL_COLUMNS = {
     "Híbrido α(H) (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS_alpha",
     "Híbrido blocos (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS_blocks",
     "Híbrido blocos α (ARIMA + N-HiTS)": "Hybrid_ARIMA_NHITS_blocks_alpha",
+    "Híbrido v2 (ARIMA + N-HiTS, trecho completo)": "Hybrid_ARIMA_NHITS_exog",
+    "Híbrido v2 α(H) (ARIMA + N-HiTS, trecho completo)": "Hybrid_ARIMA_NHITS_exog_alpha",
     "Híbrido (Prophet + N-HiTS)": "Hybrid_Prophet_NHITS",
     "Ingênuo (último valor)": "Naive",
     "Ingênuo Sazonal": "SeasonalNaive",
@@ -160,6 +162,7 @@ ROLLING_SOURCES = {
     "deep_learning": "deep",
     "hybrid": "hybrid",
     "hybrid_blocks": "hybrid_blocks",
+    "hybrid_exog": "hybrid_exog",
     "hybrid_prophet": "hybrid_prophet",
 }
 

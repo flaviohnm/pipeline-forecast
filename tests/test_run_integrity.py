@@ -61,7 +61,7 @@ def test_conferencia_final_acusa_modelo_e_janelas_faltando(tmp_path):
     n = len(get_rolling_origins(info, n_rows))
     horizontes = info["forecast_horizon"]
     _avaliacao(list(MODEL_COLUMNS), horizontes, n).to_csv(tmp_path / "ETTh1_evaluation_rolling.csv", index=False)
-    for extra in ("residual_check", "hybrid_alpha"):
+    for extra in ("residual_check", "hybrid_alpha", "hybrid_exog_alpha"):
         (tmp_path / f"ETTh1_{extra}.csv").write_text("x\n1\n")
     assert missing_for_dataset("ETTh1", info, tmp_path, n_rows) == []
 
