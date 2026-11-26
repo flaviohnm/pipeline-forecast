@@ -38,7 +38,7 @@ def missing_for_dataset(name, info, metrics_dir, n_rows, config=None):
                        if (h, m) in got and got[(h, m)] != esperado_janelas]
         if incompletos:
             faltas.append(f"H={h}: janelas incompletas em {', '.join(incompletos)}")
-    for extra in ("residual_check", "hybrid_alpha", "hybrid_exog_alpha"):
+    for extra in ("residual_check", "hybrid_alpha", "hybrid_hstep_alpha"):
         if not (metrics_dir / f"{name}_{extra}.csv").exists():
             faltas.append(f"{name}_{extra}.csv ausente")
     return faltas

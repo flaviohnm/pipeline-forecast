@@ -168,7 +168,7 @@ run_dataset_pipeline() {
 
     run_step "NHiTS_Treino_Residuos${S}" "$(py_dataset "$ds" src/models/nhits_residual.py)" "ARIMA_Baseline${S}" $hpo_res_dep
     run_step "Hibrido_ARIMA_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_combiner.py)" "ARIMA_Baseline${S}" "NHiTS_Treino_Residuos${S}"
-    run_step "Hibrido_ARIMA_NHiTS_Exog${S}" "$(py_dataset "$ds" src/models/hybrid_exog_backtest.py)" "ARIMA_Baseline${S}" $hpo_res_dep
+    run_step "Hibrido_ARIMA_NHiTS_Hstep${S}" "$(py_dataset "$ds" src/models/hybrid_hstep_backtest.py)" "ARIMA_Baseline${S}" $hpo_res_dep
     run_step "Hibrido_Prophet_NHiTS${S}" "$(py_dataset "$ds" src/models/hybrid_prophet_nhits.py)" $hpo_res_dep
     # Cada rede roda em um processo próprio: uma falha (ex.: falta de memória) não leva as outras junto
     for m in MLP LSTM NHITS Informer; do
@@ -276,7 +276,7 @@ executar_opcao() {
                 run_and_time "HPO_${k}" "${INHIBIT_CMD}poetry run python src/models/hpo.py --models ${k}"
             done
             ;;
-        20) run_and_time "Hibrido_ARIMA_NHiTS_Exog" "${INHIBIT_CMD}poetry run python src/models/hybrid_exog_backtest.py" ;;
+        20) run_and_time "Hibrido_ARIMA_NHiTS_Hstep" "${INHIBIT_CMD}poetry run python src/models/hybrid_hstep_backtest.py" ;;
         *)
             echo "❌ Opção inválida."
             return 1
@@ -337,7 +337,7 @@ while true; do
     echo "  [11] 🖥️  Diagnóstico: GPU ou CPU? (dispositivo que as redes vão usar)"
     echo "  [17] 🔎 Verificação prévia dos dados   | [18] ✅ Conferência final (falta algum modelo?)"
     echo "  [19] 🔧 Otimização de hiperparâmetros das redes (Optuna)"
-    echo "  [20] 🧪 Híbrido v2: ARIMA + N-HiTS com trecho completo e backtest de h passos (exige ARIMA)"
+    echo "  [20] 🧪 Híbrido ARIMA–N-HiTS com correção do erro de h passos (exige ARIMA)"
     echo "----------------------------------------------------------------------"
     echo "  [S/s] Sair do Orquestrador"
     echo ""

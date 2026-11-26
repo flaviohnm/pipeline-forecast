@@ -1,10 +1,10 @@
 """
-Híbrido v2: ARIMA + N-HiTS que enxerga o trecho completo do bloco (série original + previsão do ARIMA)
+Híbrido ARIMA–N-HiTS com correção do erro de h passos: o N-HiTS enxerga o trecho completo do bloco (série original + previsão do ARIMA)
 e é treinado no erro REAL de h passos do ARIMA, obtido num backtest rolling fora da amostra.
 
 Diferenças em relação ao híbrido aditivo (hybrid_combiner.py):
 
-| ponto                | híbrido aditivo atual                  | híbrido v2 (este módulo)                              |
+| ponto                | híbrido aditivo atual                  | híbrido erro h (este módulo)                          |
 |----------------------|----------------------------------------|-------------------------------------------------------|
 | alvo da rede         | resíduo in-sample de 1 passo           | erro de h passos do ARIMA numa origem (backtest)       |
 | entrada da rede      | só a história dos resíduos             | série original (passado) + previsão do ARIMA (futuro) |
@@ -29,9 +29,9 @@ Sem vazamento / sem otimismo na escolha do alpha:
 O teste nunca entra no treino. As previsões do ARIMA nas origens de validação/teste são as dos arquivos
 `*_arima_val_rolling.csv` e `*_arima_rolling.csv`, as mesmas dos demais híbridos.
 
-Saídas: {dataset}_hybrid_exog_rolling.csv (colunas Hybrid_ARIMA_NHITS_exog e Hybrid_ARIMA_NHITS_exog_alpha, com H),
-{dataset}_hybrid_exog_alpha.csv (alpha, MSE de validação, habilidade da correção) e o backtest em
-{dataset}_hybrid_exog_backtest.csv.
+Saídas: {dataset}_hybrid_hstep_rolling.csv (colunas Hybrid_ARIMA_NHITS_hstep e Hybrid_ARIMA_NHITS_hstep_alpha, com H),
+{dataset}_hybrid_hstep_alpha.csv (alpha, MSE de validação, habilidade da correção) e o backtest em
+{dataset}_hybrid_hstep_backtest.csv.
 """
 
 import sys
@@ -51,11 +51,11 @@ from src.utils.general import check_rolling_cutoffs, get_datasets, get_protocol,
 
 warnings.filterwarnings("ignore")
 
-EXOG_COL = "Hybrid_ARIMA_NHITS_exog"
-EXOG_ALPHA_COL = "Hybrid_ARIMA_NHITS_exog_alpha"
+HSTEP_COL = "Hybrid_ARIMA_NHITS_hstep"
+HSTEP_ALPHA_COL = "Hybrid_ARIMA_NHITS_hstep_alpha"
 EXOG_NAME = "path"
 
-DEFAULT_EXOG_CONFIG = {
+DEFAULT_HSTEP_CONFIG = {
     "enabled": True,
     "fit_frac": 0.5,  # fração do bloco de treino usada para ajustar os parâmetros do ARIMA do backtest
     "stride": None,  # passo entre origens do backtest; None -> rolling.step_size do dataset
@@ -63,13 +63,13 @@ DEFAULT_EXOG_CONFIG = {
 }
 
 
-def load_exog_config(config):
-    """Seção `hybrid_exog` do YAML com padrões; valida os valores."""
-    cfg = {**DEFAULT_EXOG_CONFIG, **((config or {}).get("hybrid_exog") or {})}
+def load_hstep_config(config):
+    """Seção `hybrid_hstep` do YAML com padrões; valida os valores."""
+    cfg = {**DEFAULT_HSTEP_CONFIG, **((config or {}).get("hybrid_hstep") or {})}
     if not 0.1 <= float(cfg["fit_frac"]) < 1:
-        raise ValueError(f"hybrid_exog.fit_frac deve estar em [0.1, 1), recebido {cfg['fit_frac']}.")
+        raise ValueError(f"hybrid_hstep.fit_frac deve estar em [0.1, 1), recebido {cfg['fit_frac']}.")
     if cfg["stride"] is not None and int(cfg["stride"]) <= 0:
-        raise ValueError("hybrid_exog.stride deve ser um inteiro positivo.")
+        raise ValueError("hybrid_hstep.stride deve ser um inteiro positivo.")
     return cfg
 
 
@@ -167,7 +167,7 @@ def positions_for_horizon(backtest_positions, boundary, h):
     return [p for p in backtest_positions if p + h <= boundary]
 
 
-def exog_nhits(h, config, input_size, dataset, max_steps=None):
+def hstep_nhits(h, config, input_size, dataset, max_steps=None):
     """N-HiTS com a exógena `path`, sem scaler e sem early stopping (não há validação interna)."""
     from src.models.deep_profile import build_nhits
 
@@ -198,7 +198,7 @@ def predict_corrections(nf, df, forecasts, positions, input_size, h):
 # ----------------------------------------------------------------------------
 # Pipeline por dataset
 # ----------------------------------------------------------------------------
-def hybrid_exog_rolling(df, info, config, dataset, df_arima, df_arima_val, backtest, horizons, input_size, exog_cfg,
+def hybrid_hstep_rolling(df, info, config, dataset, df_arima, df_arima_val, backtest, horizons, input_size, hstep_cfg,
                         alpha_step=0.05, model_factory=None):
     """
     Retorna (previsões do teste com H, tabela de alpha). `model_factory(h)` devolve o N-HiTS (injetável nos testes).
@@ -211,11 +211,11 @@ def hybrid_exog_rolling(df, info, config, dataset, df_arima, df_arima_val, backt
     test_pos = get_rolling_origins(info, len(df))
     val_pos = validation_origins(info, len(df))
     if not val_pos:
-        raise ValueError("Validação menor que o horizonte máximo: o híbrido v2 precisa dela para o alpha.")
+        raise ValueError("Validação menor que o horizonte máximo: o híbrido ARIMA+N-HiTS (erro h) precisa dela para o alpha.")
     bt_pos = [int(np.flatnonzero(df["ds"].to_numpy() == c)[0]) + 1 for c in sorted(backtest["cutoff"].unique())]
     train_end = info["train_size"]
     val_end = train_end + info["rolling"]["val_size"]
-    factory = model_factory or (lambda h: exog_nhits(h, config, input_size, dataset, exog_cfg["max_steps"]))
+    factory = model_factory or (lambda h: hstep_nhits(h, config, input_size, dataset, hstep_cfg["max_steps"]))
 
     val_frames, test_frames = [], []
     for h in horizons:
@@ -250,45 +250,45 @@ def hybrid_exog_rolling(df, info, config, dataset, df_arima, df_arima_val, backt
 
     out = pd.merge(df_test, df_arima[["unique_id"] + KEYS + ["ARIMA"]], on=KEYS, how="left")
     if out["ARIMA"].isna().any():
-        raise ValueError("O ARIMA não cobre todas as datas do híbrido v2.")
-    out["NHITS_exog"] = out["NHITS"]
-    out[EXOG_COL] = out["ARIMA"] + out["NHITS_exog"]
-    out[EXOG_ALPHA_COL] = out["ARIMA"] + out["H"].map(alphas).astype(float) * out["NHITS_exog"]
-    out = out[["unique_id", "H", "cutoff", "ds", "ARIMA", "NHITS_exog", EXOG_COL, EXOG_ALPHA_COL]]
+        raise ValueError("O ARIMA não cobre todas as datas do híbrido ARIMA+N-HiTS (erro h).")
+    out["NHITS_hstep"] = out["NHITS"]
+    out[HSTEP_COL] = out["ARIMA"] + out["NHITS_hstep"]
+    out[HSTEP_ALPHA_COL] = out["ARIMA"] + out["H"].map(alphas).astype(float) * out["NHITS_hstep"]
+    out = out[["unique_id", "H", "cutoff", "ds", "ARIMA", "NHITS_hstep", HSTEP_COL, HSTEP_ALPHA_COL]]
     out = out.sort_values(["H", "cutoff", "ds"]).reset_index(drop=True)
     for h, df_h in out.groupby("H"):
         check_rolling_cutoffs(df_h, df, test_pos, h=h)
     return out, table
 
 
-class HybridExogBacktestTrainer:
+class HybridHstepBacktestTrainer:
     def __init__(self, config_path="config/main_config.yaml"):
         with open(BASE_DIR / config_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
         paths = self.config["results_paths"]
         self.arima_dir = BASE_DIR / paths["arima"]
-        self.out_dir = BASE_DIR / paths.get("hybrid_exog", "results/forecasts/hybrid_exog/")
+        self.out_dir = BASE_DIR / paths.get("hybrid_hstep", "results/forecasts/hybrid_hstep/")
         self.metrics_dir = BASE_DIR / paths["metrics"]
         self.protocol = get_protocol(self.config)
-        self.exog_cfg = load_exog_config(self.config)
+        self.hstep_cfg = load_hstep_config(self.config)
         self.hybrid_cfg = load_hybrid_config(self.config)
 
     def run(self):
         from src.models.deep_profile import load_deep_config, model_horizons, tuned_input_size
         from src.utils.compute import describe_compute
 
-        print("\n🧬 Iniciando Treinamento: Híbrido v2 (ARIMA + N-HiTS com trecho completo e backtest de h passos)")
+        print("\n🧬 Iniciando Treinamento: Híbrido ARIMA–N-HiTS com correção do erro de h passos")
         print(describe_compute(self.config))
         if self.protocol != "rolling":
-            print("⚠️ O híbrido v2 só existe no protocolo rolling (evaluation.protocol). Nada a fazer.")
+            print("⚠️ O híbrido ARIMA+N-HiTS (erro h) só existe no protocolo rolling (evaluation.protocol). Nada a fazer.")
             return
-        if not self.exog_cfg["enabled"]:
-            print("ℹ️ hybrid_exog.enabled=false: etapa pulada.")
+        if not self.hstep_cfg["enabled"]:
+            print("ℹ️ hybrid_hstep.enabled=false: etapa pulada.")
             return
 
         deep_cfg = load_deep_config(self.config)
         for name, info in get_datasets(self.protocol).items():
-            print(f"\n=======================================\n🧬 Híbrido v2 para: {name}\n=======================================")
+            print(f"\n=======================================\n🧬 Híbrido ARIMA–N-HiTS com correção do erro de h passos para: {name}\n=======================================")
             raw_file = BASE_DIR / info["path"]
             arima_file = self.arima_dir / f"{name}_arima_rolling.csv"
             val_file = self.arima_dir / f"{name}_arima_val_rolling.csv"
@@ -302,25 +302,25 @@ class HybridExogBacktestTrainer:
 
             input_size = tuned_input_size(self.config, name, "NHITS_RES", residual_input_sizes(self.hybrid_cfg, deep_cfg)[0])
             horizons = model_horizons(info, deep_cfg)
-            print(f"   > input_size={input_size} | H={horizons} | fit_frac={self.exog_cfg['fit_frac']}")
+            print(f"   > input_size={input_size} | H={horizons} | fit_frac={self.hstep_cfg['fit_frac']}")
 
-            backtest = arima_backtest(df, info, self.exog_cfg["fit_frac"], self.exog_cfg["stride"])
+            backtest = arima_backtest(df, info, self.hstep_cfg["fit_frac"], self.hstep_cfg["stride"])
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            backtest.to_csv(self.out_dir / f"{name}_hybrid_exog_backtest.csv", index=False)
+            backtest.to_csv(self.out_dir / f"{name}_hybrid_hstep_backtest.csv", index=False)
             print(f"   > Backtest do ARIMA: {backtest['cutoff'].nunique()} origens fora da amostra")
 
-            out, table = hybrid_exog_rolling(
-                df, info, self.config, name, df_arima, df_arima_val, backtest, horizons, input_size, self.exog_cfg,
+            out, table = hybrid_hstep_rolling(
+                df, info, self.config, name, df_arima, df_arima_val, backtest, horizons, input_size, self.hstep_cfg,
                 alpha_step=self.hybrid_cfg["alpha"]["grid_step"],
             )
-            out_file = self.out_dir / f"{name}_hybrid_exog_rolling.csv"
+            out_file = self.out_dir / f"{name}_hybrid_hstep_rolling.csv"
             out.to_csv(out_file, index=False)
             self.metrics_dir.mkdir(parents=True, exist_ok=True)
-            table_file = self.metrics_dir / f"{name}_hybrid_exog_alpha.csv"
+            table_file = self.metrics_dir / f"{name}_hybrid_hstep_alpha.csv"
             table.round(6).to_csv(table_file, index=False)
-            print(f"✅ Híbrido v2 salvo em: {out_file.parent.name}/{out_file.name}")
+            print(f"✅ Híbrido ARIMA+N-HiTS (erro h) salvo em: {out_file.parent.name}/{out_file.name}")
             print(table.round(4).to_string(index=False))
 
 
 if __name__ == "__main__":
-    HybridExogBacktestTrainer().run()
+    HybridHstepBacktestTrainer().run()

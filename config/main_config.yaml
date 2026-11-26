@@ -16,7 +16,7 @@ results_paths:
   deep_learning: "results/forecasts/deep/"
   hybrid: "results/forecasts/hybrid/"
   hybrid_blocks: "results/forecasts/hybrid_blocks/"
-  hybrid_exog: "results/forecasts/hybrid_exog/"
+  hybrid_hstep: "results/forecasts/hybrid_hstep/"
   hybrid_prophet: "results/forecasts/hybrid_prophet/"
   prophet: "results/forecasts/prophet/"
   arima: "results/forecasts/arima/"
@@ -62,9 +62,9 @@ hybrid:
     enabled: true
 
 # Redes neurais: MLP, LSTM, N-HiTS, Informer e o N-HiTS dos híbridos (src/models/deep_profile.py)
-# Híbrido v2 (src/models/hybrid_exog_backtest.py): a rede recebe o trecho completo (série original no contexto +
+# Híbrido ARIMA–N-HiTS com correção do erro de h passos (src/models/hybrid_hstep_backtest.py): a rede recebe o trecho completo (série original no contexto +
 # previsão do ARIMA no horizonte) e é treinada no erro de h passos do ARIMA obtido num backtest fora da amostra.
-hybrid_exog:
+hybrid_hstep:
   enabled: true
   fit_frac: 0.5  # fração do bloco de treino em que o ARIMA do backtest é ajustado (as origens vêm depois)
   stride: null   # passo entre origens do backtest; null -> rolling.step_size do dataset

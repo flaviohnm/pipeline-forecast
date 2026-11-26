@@ -7,15 +7,15 @@ import pytest
 from neuralforecast.models import NHITS
 
 from src.models.arima_baseline import arima_rolling, arima_validation, validation_origins
-from src.models.hybrid_exog_backtest import (
-    EXOG_ALPHA_COL,
-    EXOG_COL,
+from src.models.hybrid_hstep_backtest import (
+    HSTEP_ALPHA_COL,
+    HSTEP_COL,
     EXOG_NAME,
     arima_backtest,
     backtest_origins,
-    hybrid_exog_rolling,
+    hybrid_hstep_rolling,
     inference_frames,
-    load_exog_config,
+    load_hstep_config,
     positions_for_horizon,
     training_frame,
 )
@@ -57,11 +57,11 @@ def arima_files(df):
 
 
 def test_config_defaults_e_validacao():
-    assert load_exog_config({})["fit_frac"] == 0.5
+    assert load_hstep_config({})["fit_frac"] == 0.5
     with pytest.raises(ValueError):
-        load_exog_config({"hybrid_exog": {"fit_frac": 1.0}})
+        load_hstep_config({"hybrid_hstep": {"fit_frac": 1.0}})
     with pytest.raises(ValueError):
-        load_exog_config({"hybrid_exog": {"stride": 0}})
+        load_hstep_config({"hybrid_hstep": {"stride": 0}})
 
 
 def test_origens_do_backtest_nao_tocam_o_teste():
@@ -111,7 +111,7 @@ def test_inference_frames_nao_usa_valores_futuros(df, arima_files):
     np.testing.assert_allclose(h1[EXOG_NAME].to_numpy(), hist2[EXOG_NAME].to_numpy())
 
 
-def test_hybrid_exog_rolling_ponta_a_ponta(df, arima_files):
+def test_hybrid_hstep_rolling_ponta_a_ponta(df, arima_files):
     fc, val = arima_files
     bt = arima_backtest(df, INFO, 0.5, 24, n_jobs=1)
 
@@ -119,16 +119,16 @@ def test_hybrid_exog_rolling_ponta_a_ponta(df, arima_files):
         return NHITS(h=h, input_size=INPUT, futr_exog_list=[EXOG_NAME], scaler_type=None, max_steps=15,
                      early_stop_patience_steps=-1, random_seed=1, **QUIET)
 
-    out, table = hybrid_exog_rolling(
-        df, INFO, {}, "SYN", fc, val, bt, [H], INPUT, load_exog_config({}), model_factory=factory
+    out, table = hybrid_hstep_rolling(
+        df, INFO, {}, "SYN", fc, val, bt, [H], INPUT, load_hstep_config({}), model_factory=factory
     )
     test_pos = get_rolling_origins(INFO, len(df))
     assert out["cutoff"].nunique() == len(test_pos)
     assert (out.groupby(["H", "cutoff"]).size() == H).all()
-    np.testing.assert_allclose(out[EXOG_COL], out["ARIMA"] + out["NHITS_exog"])
+    np.testing.assert_allclose(out[HSTEP_COL], out["ARIMA"] + out["NHITS_hstep"])
     assert table["alpha"].between(0, 1).all()
     assert {"skill_residual", "mse_val_arima", "mse_val_aditivo"} <= set(table.columns)
     # alpha = 0 reproduz o ARIMA
     z = out["H"].map(dict(zip(table["H"], table["alpha"])))
-    np.testing.assert_allclose(out[EXOG_ALPHA_COL], out["ARIMA"] + z * out["NHITS_exog"])
+    np.testing.assert_allclose(out[HSTEP_ALPHA_COL], out["ARIMA"] + z * out["NHITS_hstep"])
     assert len(validation_origins(INFO, len(df))) > 0
